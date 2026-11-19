@@ -1,0 +1,14 @@
+# Local development database. Start it with: pnpm db:up
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: anbarnet
+      POSTGRES_PASSWORD: anbarnet
+      POSTGRES_DB: anbarnet
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql
+volumes:
+  db-data:

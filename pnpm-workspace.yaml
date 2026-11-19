@@ -1,0 +1,7 @@
+# Single-package repo. This file holds pnpm settings only.
+# Postinstall scripts run only for the packages listed as true.
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
+  "@tailwindcss/oxide": true
