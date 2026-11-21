@@ -5,6 +5,10 @@ const nextConfig: NextConfig = {
   output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    // Product photos and supplier Excel files are up to 5 MB each (catalog, #1).
+    serverActions: { bodySizeLimit: "6mb" },
+  },
   turbopack: {
     rules: {
       "*.css": {
