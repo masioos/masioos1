@@ -246,8 +246,9 @@ export async function listProductsAdmin(opts: { q?: string; warehouseId?: string
 
 // ── Photos ─────────────────────────────────────────────────────────────────────────────
 
+// UPLOAD_DIR is runtime data, not source code: tell the bundler not to trace (copy) that folder.
 function uploadDir() {
-  return path.resolve(env.UPLOAD_DIR);
+  return path.resolve(/*turbopackIgnore: true*/ env.UPLOAD_DIR);
 }
 
 export async function listPhotos(productId: string) {
@@ -271,7 +272,7 @@ export async function addPhoto(productId: string, file: File): Promise<Result> {
 
   const fileName = `${randomUUID()}.${type}`;
   await mkdir(uploadDir(), { recursive: true });
-  await writeFile(path.join(uploadDir(), fileName), bytes);
+  await writeFile(path.join(/*turbopackIgnore: true*/ uploadDir(), fileName), bytes);
   await db.insert(catalogProductPhotos).values({ productId, fileName, position: existing.length });
   return { ok: true };
 }
@@ -282,7 +283,7 @@ export async function removePhoto(photoId: string) {
     .where(eq(catalogProductPhotos.id, photoId))
     .returning({ fileName: catalogProductPhotos.fileName });
   if (row && isSafePhotoName(row.fileName)) {
-    await unlink(path.join(uploadDir(), row.fileName)).catch(() => undefined);
+    await unlink(path.join(/*turbopackIgnore: true*/ uploadDir(), row.fileName)).catch(() => undefined);
   }
 }
 
@@ -290,7 +291,7 @@ export async function removePhoto(photoId: string) {
 export async function readPhoto(name: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   if (!isSafePhotoName(name)) return null;
   try {
-    const bytes = new Uint8Array(await readFile(path.join(uploadDir(), name)));
+    const bytes = new Uint8Array(await readFile(path.join(/*turbopackIgnore: true*/ uploadDir(), name)));
     const ext = name.slice(name.lastIndexOf(".") + 1) as keyof typeof PHOTO_CONTENT_TYPES;
     return { bytes, contentType: PHOTO_CONTENT_TYPES[ext] };
   } catch {

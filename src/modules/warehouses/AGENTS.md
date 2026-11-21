@@ -7,8 +7,11 @@ and bank card (CONTEXT.md § Warehouse).
 | --------------------- | ------------------------------------------------------- |
 | `index.ts`            | public surface — the only file other code imports       |
 | `schema.ts`           | Drizzle tables (`warehouses`)                           |
-| `rules.ts`            | pure validation (card number, names) + `rules.test.ts`  |
-| `service.ts`          | server-side use cases (list, create)                    |
+| `rules.ts`            | pure validation (card number, names, profit %) + tests  |
+| `service.ts`          | list, create, set profit, `getWarehouseProfits` (catalog) |
+
+Profit is stored as basis points (`profit_bp`, 1000 = 10%). Changing it changes the shop price of all
+the warehouse's products at once (catalog computes the shop price on read).
 | `actions.ts`          | server actions for forms                                |
 | `ui/`                 | React components                                        |
 
