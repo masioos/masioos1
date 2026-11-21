@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatToman } from "../rules";
+import { formatToman, isUuid } from "../rules";
 import {
   getProductForEdit,
   listProductFormOptions,
@@ -27,7 +27,6 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const pageOf = (v: string | string[] | undefined) => Math.max(1, Math.min(1000, Number(one(v)) || 1));
-const isUuid = (v: string) => /^[0-9a-f-]{36}$/i.test(v);
 
 const price = (n: number | null) => (n === null ? "—" : formatToman(n));
 
@@ -146,7 +145,7 @@ export async function EditProduct({
         <FlagButton id={product.id} flag="isActive" value={product.isActive} />
         <FlagButton id={product.id} flag="isUnavailable" value={product.isUnavailable} />
         {product.isActive && (
-          <Link className="text-primary text-sm underline" href={`/p/${product.code}`}>
+          <Link className="text-primary text-sm underline" href={`/p/${encodeURIComponent(product.code)}`}>
             دیدن در فروشگاه
           </Link>
         )}

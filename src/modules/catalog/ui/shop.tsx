@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { normalizeCode } from "../rules";
+import { isUuid, normalizeCode } from "../rules";
 import {
   getProductByCode,
   listFilterOptions,
@@ -20,7 +20,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const uuidOrEmpty = (v: string | string[] | undefined) => {
   const s = one(v);
-  return /^[0-9a-f-]{36}$/i.test(s) ? s : "";
+  return isUuid(s) ? s : "";
 };
 
 function FilterSelect({

@@ -40,12 +40,23 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
 /** Postgres "unique violation" (23505), also when Drizzle wraps the driver error. */
 function uniqueViolation(e: unknown): string | null {
+  return pgError(e, "23505");
+}
+
+function pgError(e: unknown, wanted: string): string | null {
   for (let err = e; err && typeof err === "object"; err = (err as { cause?: unknown }).cause) {
     const { code, constraint_name } = err as { code?: string; constraint_name?: string };
-    if (code === "23505") return constraint_name ?? "";
+    if (code === wanted) return constraint_name ?? "";
   }
   return null;
 }
+
+/** Postgres "foreign key violation" (23503): a chosen warehouse, car, brand ... no longer exists. */
+function missingReference(e: unknown): boolean {
+  return pgError(e, "23503") !== null;
+}
+
+const MISSING = "اطلاعات انتخاب‌شده پیدا نشد. صفحه را دوباره باز کنید.";
 
 /** For ILIKE: a literal %, _ or \ typed by a shopper must not act as a wildcard. */
 function likeContains(word: string): string {
@@ -81,6 +92,26 @@ export async function saveListItem(input: ListItemInput): Promise<Result> {
       if (input.id && input.id === input.parentId) {
         return { ok: false, error: "یک دسته نمی‌تواند زیرمجموعه‌ی خودش باشد" };
       }
+      // Two levels only: the parent must be a main category, and a main category with
+      // sub-categories cannot itself become a sub-category.
+      if (input.parentId) {
+        const [parent] = await db
+          .select({ parentId: catalogCategories.parentId })
+          .from(catalogCategories)
+          .where(eq(catalogCategories.id, input.parentId));
+        if (!parent) return { ok: false, error: MISSING };
+        if (parent.parentId) return { ok: false, error: "دسته فقط دو سطح دارد: دسته‌ی اصلی و زیرمجموعه" };
+        if (input.id) {
+          const [child] = await db
+            .select({ id: catalogCategories.id })
+            .from(catalogCategories)
+            .where(eq(catalogCategories.parentId, input.id))
+            .limit(1);
+          if (child) {
+            return { ok: false, error: "این دسته زیرمجموعه دارد و نمی‌تواند زیرمجموعه‌ی دسته‌ی دیگری شود" };
+          }
+        }
+      }
       const values = { name: input.name, parentId: input.parentId };
       if (input.id) await db.update(catalogCategories).set(values).where(eq(catalogCategories.id, input.id));
       else await db.insert(catalogCategories).values(values);
@@ -110,6 +141,7 @@ export async function saveListItem(input: ListItemInput): Promise<Result> {
     return { ok: true };
   } catch (e) {
     if (uniqueViolation(e) !== null) return { ok: false, error: "این نام قبلاً ثبت شده است" };
+    if (missingReference(e)) return { ok: false, error: MISSING };
     throw e;
   }
 }
@@ -155,6 +187,7 @@ export async function createProduct(input: ProductInput): Promise<Result<{ id: s
     return { ok: true, id };
   } catch (e) {
     if (uniqueViolation(e) !== null) return { ok: false, error: DUPLICATE_CODE };
+    if (missingReference(e)) return { ok: false, error: MISSING };
     throw e;
   }
 }
@@ -162,19 +195,23 @@ export async function createProduct(input: ProductInput): Promise<Result<{ id: s
 export async function updateProduct(id: string, input: ProductInput): Promise<Result> {
   const brand = await brandName(input.brandId);
   try {
-    await db.transaction(async (tx) => {
-      await tx
+    const found = await db.transaction(async (tx) => {
+      const updated = await tx
         .update(catalogProducts)
         .set({ ...productValues(input, brand), updatedAt: new Date() })
-        .where(eq(catalogProducts.id, id));
+        .where(eq(catalogProducts.id, id))
+        .returning({ id: catalogProducts.id });
+      if (updated.length === 0) return false;
       await tx.delete(catalogProductCars).where(eq(catalogProductCars.productId, id));
       if (input.carIds.length > 0) {
         await tx.insert(catalogProductCars).values(input.carIds.map((carId) => ({ productId: id, carId })));
       }
+      return true;
     });
-    return { ok: true };
+    return found ? { ok: true } : { ok: false, error: "کالا پیدا نشد" };
   } catch (e) {
     if (uniqueViolation(e) !== null) return { ok: false, error: DUPLICATE_CODE };
+    if (missingReference(e)) return { ok: false, error: MISSING };
     throw e;
   }
 }
@@ -262,18 +299,42 @@ export async function listPhotos(productId: string) {
 export async function addPhoto(productId: string, file: File): Promise<Result> {
   if (file.size === 0) return { ok: false, error: "فایلی انتخاب نشده است" };
   if (file.size > MAX_PHOTO_BYTES) return { ok: false, error: "حجم عکس باید کمتر از ۵ مگابایت باشد" };
-  const existing = await listPhotos(productId);
-  if (existing.length >= MAX_PHOTOS_PER_PRODUCT) {
-    return { ok: false, error: "هر کالا حداکثر ۶ عکس می‌تواند داشته باشد" };
-  }
   const bytes = new Uint8Array(await file.arrayBuffer());
   const type = detectImageType(bytes);
   if (!type) return { ok: false, error: "فقط عکس JPG، PNG یا WEBP قبول می‌شود" };
-
   const fileName = `${randomUUID()}.${type}`;
-  await mkdir(uploadDir(), { recursive: true });
-  await writeFile(path.join(/*turbopackIgnore: true*/ uploadDir(), fileName), bytes);
-  await db.insert(catalogProductPhotos).values({ productId, fileName, position: existing.length });
+
+  // Row first, under a lock on the product, so two quick uploads cannot pass the limit of 6
+  // and a missing product never leaves a stray file on disk.
+  const saved = await db.transaction(async (tx) => {
+    const [product] = await tx
+      .select({ id: catalogProducts.id })
+      .from(catalogProducts)
+      .where(eq(catalogProducts.id, productId))
+      .for("update");
+    if (!product) return { ok: false as const, error: "کالا پیدا نشد" };
+    const [{ n }] = await tx
+      .select({ n: count() })
+      .from(catalogProductPhotos)
+      .where(eq(catalogProductPhotos.productId, productId));
+    if (n >= MAX_PHOTOS_PER_PRODUCT) {
+      return { ok: false as const, error: "هر کالا حداکثر ۶ عکس می‌تواند داشته باشد" };
+    }
+    const [row] = await tx
+      .insert(catalogProductPhotos)
+      .values({ productId, fileName, position: n })
+      .returning({ id: catalogProductPhotos.id });
+    return { ok: true as const, id: row.id };
+  });
+  if (!saved.ok) return saved;
+
+  try {
+    await mkdir(uploadDir(), { recursive: true });
+    await writeFile(path.join(/*turbopackIgnore: true*/ uploadDir(), fileName), bytes);
+  } catch (e) {
+    await db.delete(catalogProductPhotos).where(eq(catalogProductPhotos.id, saved.id));
+    throw e;
+  }
   return { ok: true };
 }
 
@@ -312,6 +373,10 @@ export type ImportReport = {
  * if missing). Code already in this warehouse → update the purchase price only (+ car link if
  * missing); the name staff may have edited is never touched. Code in another warehouse → skipped.
  */
+export async function warehouseExists(id: string): Promise<boolean> {
+  return (await getWarehouseProfits([id])).has(id);
+}
+
 export async function importStockSheet(warehouseId: string, rows: StockRow[]): Promise<ImportReport> {
   const report: ImportReport = { created: 0, updated: 0, skipped: [] };
   if (rows.length === 0) return report;

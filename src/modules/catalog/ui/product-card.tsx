@@ -20,7 +20,7 @@ export function UnavailableBadge() {
 export function ProductCard({ product }: { product: ShopProduct }) {
   return (
     <Link
-      href={`/p/${product.code}`}
+      href={`/p/${encodeURIComponent(product.code)}`}
       className="hover:border-primary flex flex-col gap-2 rounded-xl border p-3 transition-colors"
     >
       <div className="bg-muted/40 flex aspect-square items-center justify-center overflow-hidden rounded-lg">

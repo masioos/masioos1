@@ -43,8 +43,11 @@ export function parsePriceText(input: string): number | null | "invalid" {
   if (text === "") return null;
   if (!/^\d+$/.test(text)) return "invalid";
   const n = Number(text);
-  return Number.isSafeInteger(n) ? n : "invalid";
+  return n <= MAX_PRICE_TOMAN ? n : "invalid";
 }
+
+/** 1,000 billion Toman: far above any part, and small enough that price × profit stays exact. */
+export const MAX_PRICE_TOMAN = 1_000_000_000_000;
 
 // ── Text ───────────────────────────────────────────────────────────────────────────────
 
@@ -65,6 +68,23 @@ export function normalizeSearch(input: string): string {
 /** Technical code: ASCII digits, no spaces or dashes. «۰۲۷۰-۲۰۲۴۲۰» → "0270202420". */
 export function normalizeCode(input: string): string {
   return toAsciiDigits(input).replace(/[\s\-_]/g, "").toUpperCase();
+}
+
+/** Technical codes use only Latin letters, digits and dots, so /p/<code> is always a clean link. */
+export function isValidCode(code: string): boolean {
+  return /^[A-Z0-9.]{1,40}$/.test(code);
+}
+
+/**
+ * One spelling for list names (cars, brands, ...): Arabic ي/ك → Persian, digits → ASCII, spaces
+ * collapsed. So «پژو ۴۰۵» typed by staff and «پژو 405» from an Excel sheet are the same car.
+ */
+export function normalizeName(input: string): string {
+  return toAsciiDigits(input)
+    .replace(/[يى]/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** The text stored in `search_text`: name + code + brand, normalized. */
@@ -97,13 +117,22 @@ export const productFormSchema = z.object({
   code: z
     .string()
     .transform(normalizeCode)
-    .pipe(z.string().min(1, "کد فنی لازم است").max(40, "کد فنی خیلی بلند است")),
+    .pipe(
+      z
+        .string()
+        .min(1, "کد فنی لازم است")
+        .max(40, "کد فنی خیلی بلند است")
+        .refine(isValidCode, "کد فنی فقط می‌تواند حروف انگلیسی، عدد و نقطه داشته باشد"),
+    ),
   name: z.string().trim().min(2, "نام کالا حداقل ۲ حرف است").max(300),
   brandId: optionalId,
   categoryId: optionalId,
   countryId: optionalId,
   partGroupId: optionalId,
-  carIds: z.array(z.uuid()).default([]),
+  carIds: z
+    .array(z.uuid())
+    .default([])
+    .transform((ids) => [...new Set(ids)]),
   description: z.string().trim().max(5000).default(""),
   purchasePriceToman: z
     .string()
@@ -126,7 +155,7 @@ export type ListKind = (typeof listKinds)[number];
 export const listItemSchema = z.object({
   kind: z.enum(listKinds),
   id: optionalId,
-  name: z.string().trim().min(2, "نام حداقل ۲ حرف است").max(200),
+  name: z.string().transform(normalizeName).pipe(z.string().min(2, "نام حداقل ۲ حرف است").max(200)),
   parentId: optionalId,
 });
 
@@ -186,8 +215,9 @@ function headerKey(cell: unknown): string {
 
 function cellRial(cell: unknown): number | null | "invalid" {
   if (cell === null || cell === undefined || cell === "") return null;
-  if (typeof cell === "number") return Number.isFinite(cell) && cell >= 0 ? cell : "invalid";
-  return parsePriceText(String(cell));
+  const rial = typeof cell === "number" ? cell : parsePriceText(String(cell));
+  if (rial === null || rial === "invalid") return rial;
+  return Number.isFinite(rial) && rial >= 0 && rial <= MAX_PRICE_TOMAN * 10 ? rial : "invalid";
 }
 
 /**
@@ -222,9 +252,12 @@ export function parseStockSheetRows(rows: readonly (readonly unknown[])[]): Stoc
     if (r.every((c) => cellText(c) === "")) return;
     const code = normalizeCode(cellText(r[col.code]));
     const name = cellText(r[col.name]);
-    const car = cellText(r[col.car]) || null;
+    const car = normalizeName(cellText(r[col.car])) || null;
     const rial = cellRial(r[col.priceRial]);
     if (!code) return void errors.push({ row, code: "", reason: "کد فنی خالی است" });
+    if (!isValidCode(code)) {
+      return void errors.push({ row, code, reason: "کد فنی فقط می‌تواند حروف انگلیسی، عدد و نقطه داشته باشد" });
+    }
     if (name.length < 2) return void errors.push({ row, code, reason: "نام قطعه خالی است" });
     if (rial === "invalid") return void errors.push({ row, code, reason: "قیمت نامعتبر است" });
     if (seen.has(code)) return void errors.push({ row, code, reason: "این کد در فایل تکراری است" });
@@ -233,4 +266,9 @@ export function parseStockSheetRows(rows: readonly (readonly unknown[])[]): Stoc
   });
 
   return { ok: true, rows: out, errors };
+}
+
+/** A real UUID (not just 36 dashes): ids from the URL are checked before they reach the database. */
+export function isUuid(value: string): boolean {
+  return z.uuid().safeParse(value).success;
 }

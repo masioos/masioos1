@@ -15,6 +15,7 @@ import {
   addPhoto,
   createProduct,
   importStockSheet,
+  warehouseExists,
   removePhoto,
   saveListItem,
   setProductFlag,
@@ -138,7 +139,9 @@ const MAX_SHEET_BYTES = 5 * 1024 * 1024;
 
 export async function importStockSheetAction(_prev: ImportState, formData: FormData): Promise<ImportState> {
   const warehouseId = z.uuid().safeParse(formData.get("warehouseId"));
-  if (!warehouseId.success) return { error: "انبار را انتخاب کنید" };
+  if (!warehouseId.success || !(await warehouseExists(warehouseId.data))) {
+    return { error: "انبار را انتخاب کنید" };
+  }
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "فایل Excel را انتخاب کنید" };
   if (!file.name.toLowerCase().endsWith(".xlsx")) return { error: "فقط فایل .xlsx قبول می‌شود" };

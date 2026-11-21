@@ -5,6 +5,8 @@ import {
   detectImageType,
   formatToman,
   isSafePhotoName,
+  isUuid,
+  normalizeName,
   normalizeCode,
   normalizeSearch,
   parseStockSheetRows,
@@ -175,5 +177,49 @@ describe("photos", () => {
     expect(detectImageType(new Uint8Array([0x89, 0x50, 0x4e, 0x47]))).toBe("png");
     expect(detectImageType(new TextEncoder().encode("RIFF1234WEBPVP8 "))).toBe("webp");
     expect(detectImageType(new TextEncoder().encode("<svg>"))).toBeNull();
+  });
+});
+
+describe("review fixes", () => {
+  const valid = {
+    warehouseId: "6f1c1f3e-8a1b-4c2d-9e3f-0a1b2c3d4e5f",
+    code: "0270202420",
+    name: "بلبرینگ چرخ جلو",
+  };
+  it("a code with / # ? or % is refused, so /p/<code> is always a clean link", () => {
+    for (const code of ["AB/12", "AB#1", "A?B", "10%"]) {
+      expect(productFormSchema.safeParse({ ...valid, code }).success).toBe(false);
+    }
+    expect(productFormSchema.safeParse({ ...valid, code: "ab.12" }).data?.code).toBe("AB.12");
+  });
+  it("a price above the maximum is refused", () => {
+    expect(productFormSchema.safeParse({ ...valid, purchasePriceToman: "9".repeat(16) }).success).toBe(false);
+  });
+  it("a car picked twice is kept once", () => {
+    const id = "6f1c1f3e-8a1b-4c2d-9e3f-0a1b2c3d4e5f";
+    expect(productFormSchema.parse({ ...valid, carIds: [id, id] }).carIds).toEqual([id]);
+  });
+  it("car names from staff and from Excel get one spelling", () => {
+    expect(normalizeName("  پژو   ۴۰۵ ")).toBe("پژو 405");
+    expect(normalizeName("سمند")).toBe(normalizeName("سمند"));
+    expect(normalizeName("ديسك")).toBe("دیسک");
+  });
+  it("the sheet parser refuses a bad code and a huge price, and normalizes the car", () => {
+    const r = parseStockSheetRows([
+      ["کد فنی قطعه", "نام قطعه", "گروه خودرو", "قیمت فروش (ریال)"],
+      ["AB/1", "قطعه یک", "پژو 405", 1000],
+      ["X1", "قطعه دو", "پژو 405", 1e20],
+      ["X2", "قطعه سه", " پژو  ۴۰۵ ", 1000],
+    ]);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.errors.map((e) => e.row)).toEqual([2, 3]);
+    expect(r.rows[0].car).toBe("پژو 405");
+  });
+});
+
+describe("isUuid", () => {
+  it("refuses 36 dashes", () => {
+    expect(isUuid("-".repeat(36))).toBe(false);
+    expect(isUuid("6f1c1f3e-8a1b-4c2d-9e3f-0a1b2c3d4e5f")).toBe(true);
   });
 });
