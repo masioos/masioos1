@@ -1,5 +1,5 @@
 import "server-only";
-import { desc } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { type NewWarehouse } from "./rules";
 import { warehouses } from "./schema";
@@ -13,4 +13,18 @@ export async function listWarehouses() {
 export async function createWarehouse(input: NewWarehouse) {
   const [row] = await db.insert(warehouses).values(input).returning();
   return row;
+}
+
+export async function setWarehouseProfit(id: string, profitBp: number) {
+  await db.update(warehouses).set({ profitBp }).where(eq(warehouses.id, id));
+}
+
+/** Profit (basis points) per warehouse id. Used by catalog to compute shop prices. */
+export async function getWarehouseProfits(ids: readonly string[]): Promise<Map<string, number>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: warehouses.id, profitBp: warehouses.profitBp })
+    .from(warehouses)
+    .where(inArray(warehouses.id, [...new Set(ids)]));
+  return new Map(rows.map((r) => [r.id, r.profitBp]));
 }
