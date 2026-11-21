@@ -88,9 +88,15 @@ idea → /grill → /plan → /build → you test it → /review → /ship
 
 ### کارهایی که فعلاً ساخته شده
 
-صفحه‌ی مدیریت انبارها: http://localhost:3000/admin/warehouses
+| بخش | آدرس |
+| --- | --- |
+| فروشگاه (جست‌وجو و فیلترها) | http://localhost:3000 |
+| انبارها و درصد سود | http://localhost:3000/admin/warehouses |
+| کالاها | http://localhost:3000/admin/catalog |
+| ورود کالا از Excel | http://localhost:3000/admin/catalog/import |
+| فهرست‌ها (خودرو، برند، کشور، دسته، گروه قطعه) | http://localhost:3000/admin/catalog/lists |
 
-بقیه‌ی بخش‌ها (کالا، قیمت، سبد خرید، سفارش، پرداخت، حسابداری) با دستور `/next` یکی‌یکی ساخته می‌شوند.
+بقیه‌ی بخش‌ها (سبد خرید، سفارش، پرداخت، حسابداری) با دستور `/next` یکی‌یکی ساخته می‌شوند.
 
 </div>
 

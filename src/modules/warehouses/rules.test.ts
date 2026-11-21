@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { newWarehouseSchema, normalizeCardNumber } from "./rules";
+import {
+  formatProfitPercent,
+  newWarehouseSchema,
+  normalizeCardNumber,
+  parseProfitPercent,
+} from "./rules";
 
 describe("normalizeCardNumber", () => {
   it("turns Persian digits with dashes into 16 ASCII digits", () => {
@@ -8,21 +13,56 @@ describe("normalizeCardNumber", () => {
 });
 
 describe("newWarehouseSchema", () => {
-  it("accepts a valid warehouse", () => {
-    const result = newWarehouseSchema.safeParse({
-      name: "انبار آقای الف",
-      ownerName: "آقای الف",
-      cardNumber: "6037 9975 1234 5678",
-    });
+  const valid = {
+    name: "انبار آقای الف",
+    ownerName: "آقای الف",
+    cardNumber: "6037 9975 1234 5678",
+    profitBp: "10",
+  };
+
+  it("accepts a valid warehouse and turns the profit into basis points", () => {
+    const result = newWarehouseSchema.safeParse(valid);
     expect(result.success).toBe(true);
+    expect(result.data?.profitBp).toBe(1000);
   });
 
   it("rejects a card number that is not 16 digits", () => {
-    const result = newWarehouseSchema.safeParse({
-      name: "انبار آقای الف",
-      ownerName: "آقای الف",
-      cardNumber: "1234",
-    });
-    expect(result.success).toBe(false);
+    expect(newWarehouseSchema.safeParse({ ...valid, cardNumber: "1234" }).success).toBe(false);
+  });
+
+  it("rejects a profit above 100", () => {
+    expect(newWarehouseSchema.safeParse({ ...valid, profitBp: "101" }).success).toBe(false);
+  });
+});
+
+describe("parseProfitPercent", () => {
+  it("reads Persian digits: «۱۰» → 1000 bp", () => {
+    expect(parseProfitPercent("۱۰")).toBe(1000);
+  });
+  it("reads decimals: 12.5 → 1250, «۱۲٫۵» → 1250, 0.25 → 25", () => {
+    expect(parseProfitPercent("12.5")).toBe(1250);
+    expect(parseProfitPercent("۱۲٫۵")).toBe(1250);
+    expect(parseProfitPercent("۱۲/۵")).toBe(1250);
+    expect(parseProfitPercent("0.25")).toBe(25);
+  });
+  it("accepts 0, 100 and a percent sign", () => {
+    expect(parseProfitPercent("0")).toBe(0);
+    expect(parseProfitPercent("100")).toBe(10_000);
+    expect(parseProfitPercent("20%")).toBe(2000);
+  });
+  it("refuses −1, 101, three decimals and text", () => {
+    expect(parseProfitPercent("-1")).toBeNull();
+    expect(parseProfitPercent("101")).toBeNull();
+    expect(parseProfitPercent("1.234")).toBeNull();
+    expect(parseProfitPercent("ده")).toBeNull();
+    expect(parseProfitPercent("")).toBeNull();
+  });
+});
+
+describe("formatProfitPercent", () => {
+  it("shows basis points as a short percent", () => {
+    expect(formatProfitPercent(1000)).toBe("10");
+    expect(formatProfitPercent(1250)).toBe("12.5");
+    expect(formatProfitPercent(25)).toBe("0.25");
   });
 });

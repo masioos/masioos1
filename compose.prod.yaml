@@ -7,6 +7,10 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://anbarnet:${POSTGRES_PASSWORD}@db:5432/anbarnet
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      # Product photos. Back this volume up together with the database.
+      - uploads:/app/uploads
     ports:
       - "3000:3000"
     depends_on:
@@ -28,3 +32,4 @@ services:
     restart: unless-stopped
 volumes:
   db-data:
+  uploads:

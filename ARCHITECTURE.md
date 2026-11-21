@@ -10,8 +10,10 @@ database, shared by every module. The phone version is the same site, installed 
 ```
 src/
 ├── app/                  routes only — thin pages that place module components
-│   ├── page.tsx          shop home (placeholder)
-│   └── admin/warehouses/ admin: warehouses
+│   ├── page.tsx          shop home: search + filters
+│   ├── p/[code]/         product page (stable URL by technical code)
+│   ├── media/[file]/     product photos from UPLOAD_DIR
+│   └── admin/            admin: warehouses, catalog (products, lists, Excel import)
 ├── modules/<name>/       one business area each
 │   ├── index.ts          public surface — the only import door
 │   ├── schema.ts         its Drizzle tables
@@ -36,8 +38,8 @@ validates with zod (`rules.ts`) and calls `service.ts`.
 
 | Module       | Status   | Owns                                                                   |
 | ------------ | -------- | ---------------------------------------------------------------------- |
-| `warehouses` | built    | warehouses and their bank card (the reference pattern)                 |
-| `catalog`    | planned  | goods per warehouse                                                    |
+| `warehouses` | built    | warehouses, their bank card and profit percent (the reference pattern) |
+| `catalog`    | built    | goods per warehouse, cars, brands, categories, part groups, Excel import, shop search |
 | `pricing`    | planned  | prices: manual, uploaded PDF price list, online feed                   |
 | `requests`   | planned  | cart → request, "find this item for me" notes, staff confirmation      |
 | `orders`     | planned  | order status: received → paid → collecting → shipped (Tipax / post)    |
@@ -53,6 +55,8 @@ validates with zod (`rules.ts`) and calls `service.ts`.
 - A module reads or writes only its own tables. To use another module's data, call a function that
   module exports from `index.ts`.
 - All modules share one DB and one transaction scope. No events, no queues.
+- A module's `schema.ts` may import another module's `schema.ts` only to declare a foreign key
+  (e.g. `catalog_products.warehouse_id → warehouses.id`). ESLint allows that one import.
 
 ## What we do not have yet
 

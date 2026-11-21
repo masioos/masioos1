@@ -17,6 +17,8 @@ export function CreateWarehouseForm() {
       <Input id="ownerName" name="ownerName" required />
       <Label htmlFor="cardNumber">شماره کارت</Label>
       <Input id="cardNumber" name="cardNumber" inputMode="numeric" dir="ltr" required />
+      <Label htmlFor="profitBp">درصد سود (روی قیمت خرید)</Label>
+      <Input id="profitBp" name="profitBp" inputMode="decimal" dir="ltr" defaultValue="0" required />
       {state.error && <p className="text-destructive text-sm">{state.error}</p>}
       {state.ok && <p className="text-sm text-green-700">انبار ثبت شد.</p>}
       <Button type="submit" disabled={pending}>
