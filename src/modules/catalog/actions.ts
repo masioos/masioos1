@@ -49,6 +49,24 @@ export async function saveListItemAction(_prev: FormState, formData: FormData): 
 
 // ── Products ───────────────────────────────────────────────────────────────────────────
 
+/** What staff typed, sent back on an error so the form shows it again (React clears a form after an action). */
+export type ProductFormState = FormState & {
+  values?: Record<string, string | string[]>;
+  // Changes after every submit, so the form re-mounts with fresh defaults.
+  attempt?: number;
+};
+
+function typedValues(formData: FormData): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const [k, v] of formData) if (typeof v === "string" && k !== "carIds") out[k] = v;
+  out.carIds = formData.getAll("carIds").filter((v): v is string => typeof v === "string");
+  return out;
+}
+
+function productError(prev: ProductFormState, formData: FormData, error: string): ProductFormState {
+  return { error, values: typedValues(formData), attempt: (prev.attempt ?? 0) + 1 };
+}
+
 function readProductForm(formData: FormData) {
   return productFormSchema.safeParse({
     ...Object.fromEntries(formData),
@@ -56,25 +74,31 @@ function readProductForm(formData: FormData) {
   });
 }
 
-export async function createProductAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function createProductAction(
+  prev: ProductFormState,
+  formData: FormData,
+): Promise<ProductFormState> {
   const parsed = readProductForm(formData);
-  if (!parsed.success) return { error: firstError(parsed.error) };
+  if (!parsed.success) return productError(prev, formData, firstError(parsed.error));
   const res = await createProduct(parsed.data);
-  if (!res.ok) return { error: res.error };
+  if (!res.ok) return productError(prev, formData, res.error);
   refreshAll();
   // Open the edit page, where photos can be added.
   redirect(`/admin/catalog/${res.id}?saved=1`);
 }
 
-export async function updateProductAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function updateProductAction(
+  prev: ProductFormState,
+  formData: FormData,
+): Promise<ProductFormState> {
   const id = z.uuid().safeParse(formData.get("id"));
   if (!id.success) return { error: "کالا پیدا نشد" };
   const parsed = readProductForm(formData);
-  if (!parsed.success) return { error: firstError(parsed.error) };
+  if (!parsed.success) return productError(prev, formData, firstError(parsed.error));
   const res = await updateProduct(id.data, parsed.data);
-  if (!res.ok) return { error: res.error };
+  if (!res.ok) return productError(prev, formData, res.error);
   refreshAll();
-  return { ok: true };
+  return { ok: true, attempt: (prev.attempt ?? 0) + 1 };
 }
 
 export async function setProductFlagAction(formData: FormData): Promise<void> {

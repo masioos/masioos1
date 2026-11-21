@@ -74,52 +74,60 @@ export function ProductForm({
     product ? updateProductAction : createProductAction,
     {},
   );
-  const carIds = new Set(product?.carIds ?? []);
+  // After an error, show what staff typed (React clears the form after every action).
+  const typed = state.error ? state.values : undefined;
+  const text = (key: keyof ProductFormValues) => {
+    const v = typed?.[key];
+    if (typed) return typeof v === "string" ? v : "";
+    const p = product?.[key];
+    return p === null || p === undefined ? "" : String(p);
+  };
+  const carIds = new Set(typed ? [typed.carIds ?? []].flat() : (product?.carIds ?? []));
 
   return (
-    <form action={formAction} className="grid max-w-2xl gap-4">
+    <form key={state.attempt ?? 0} action={formAction} className="grid max-w-2xl gap-4">
       {product && <input type="hidden" name="id" value={product.id} />}
       <Select
         name="warehouseId"
         label="انبار"
         options={asOptions(options.warehouses)}
-        value={product?.warehouseId}
+        value={text("warehouseId")}
         required
       />
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="name">نام کالا</Label>
-          <Input id="name" name="name" defaultValue={product?.name} required />
+          <Input id="name" name="name" defaultValue={text("name")} required />
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="code">کد فنی</Label>
-          <Input id="code" name="code" defaultValue={product?.code} dir="ltr" required />
+          <Input id="code" name="code" defaultValue={text("code")} dir="ltr" required />
         </div>
-        <Select name="brandId" label="برند" options={asOptions(options.brands)} value={product?.brandId} />
+        <Select name="brandId" label="برند" options={asOptions(options.brands)} value={text("brandId")} />
         <Select
           name="countryId"
           label="کشور سازنده"
           options={asOptions(options.countries)}
-          value={product?.countryId}
+          value={text("countryId")}
         />
         <Select
           name="categoryId"
           label="دسته"
           options={categoryOptions(options.categories)}
-          value={product?.categoryId}
+          value={text("categoryId")}
         />
         <Select
           name="partGroupId"
           label="گروه قطعه (برای «مدل‌های دیگر این قطعه»)"
           options={asOptions(options.partGroups)}
-          value={product?.partGroupId}
+          value={text("partGroupId")}
         />
         <div className="grid gap-1.5">
           <Label htmlFor="purchasePriceToman">قیمت خرید (تومان) — خالی یعنی «برای قیمت تماس بگیرید»</Label>
           <Input
             id="purchasePriceToman"
             name="purchasePriceToman"
-            defaultValue={product?.purchasePriceToman ?? ""}
+            defaultValue={text("purchasePriceToman")}
             inputMode="numeric"
             dir="ltr"
           />
@@ -147,7 +155,7 @@ export function ProductForm({
         <textarea
           id="description"
           name="description"
-          defaultValue={product?.description}
+          defaultValue={text("description")}
           rows={4}
           className="rounded-lg border border-input bg-background p-2 text-sm"
         />
