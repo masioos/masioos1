@@ -12,6 +12,8 @@ src/
 ├── app/                  routes only — thin pages that place module components
 │   ├── page.tsx          shop home: search + filters
 │   ├── p/[code]/         product page (stable URL by technical code)
+│   ├── cart/, requests/  shopper cart and «درخواست‌های من»
+│   ├── account/          login, register, forgot password
 │   ├── media/[file]/     product photos from UPLOAD_DIR
 │   └── admin/            admin: warehouses, catalog (products, lists, Excel import)
 ├── modules/<name>/       one business area each
@@ -41,7 +43,9 @@ validates with zod (`rules.ts`) and calls `service.ts`.
 | `warehouses` | built    | warehouses, their bank card and profit percent (the reference pattern) |
 | `catalog`    | built    | goods per warehouse, cars, brands, categories, part groups, Excel import, shop search |
 | `pricing`    | planned  | prices: manual, uploaded PDF price list, online feed                   |
-| `requests`   | planned  | cart → request, "find this item for me" notes, staff confirmation      |
+| `customers`  | built    | shopper accounts (mobile + password) and sessions                      |
+| `requests`   | built    | cart, request, staff edit / confirm / reject, deadline, alerts         |
+| `settings`   | built    | shop-wide settings (support phone)                                     |
 | `orders`     | planned  | order status: received → paid → collecting → shipped (Tipax / post)    |
 | `payments`   | planned  | gateway (+15%) or card-to-card to the warehouse card, editable per order |
 | `accounting` | planned  | invoices and ledger; receives every paid order                         |
@@ -55,12 +59,14 @@ validates with zod (`rules.ts`) and calls `service.ts`.
 - A module reads or writes only its own tables. To use another module's data, call a function that
   module exports from `index.ts`.
 - All modules share one DB and one transaction scope. No events, no queues.
+- Dependency direction: `requests` → `catalog`, `customers`, `warehouses`; `catalog` → `warehouses`.
+  `catalog` shows the add-to-cart button through a render prop the page passes in.
 - A module's `schema.ts` may import another module's `schema.ts` only to declare a foreign key
   (e.g. `catalog_products.warehouse_id → warehouses.id`). ESLint allows that one import.
 
 ## What we do not have yet
 
-- Sign-in. Only 1–3 admins; a password login is likely. The customer decides later.
+- Staff sign-in (#9). Shoppers have accounts now; the admin is still open to anyone who reaches it.
 - Payment gateway, SMS, PDF price parsing, online price feeds.
 - CI and deploy pipeline. `Dockerfile` + `compose.prod.yaml` exist; deploy by hand.
 - A native mobile app (the PWA covers phones for now).

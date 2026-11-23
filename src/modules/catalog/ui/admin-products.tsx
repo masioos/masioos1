@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { groupFa } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -57,7 +58,7 @@ export async function ProductAdminTable({ searchParams }: { searchParams: Search
           جست‌وجو
         </Button>
       </form>
-      <p className="text-muted-foreground text-sm">{total.toLocaleString("fa-IR")} کالا</p>
+      <p className="text-muted-foreground text-sm">{groupFa(total)} کالا</p>
       {items.length === 0 ? (
         <p>کالایی پیدا نشد.</p>
       ) : (

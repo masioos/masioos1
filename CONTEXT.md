@@ -17,8 +17,12 @@ One word, one meaning. Use these words in code, issues and chat. Persian in brac
 | **Stock sheet** (فایل موجودی) | A supplier's Excel list (e.g. `Mojoodi_4104070_*.xlsx`): code, name, car, price in Rial. |
 | **Price list** (لیست قیمت) | Where a warehouse's prices come from: typed by hand, an uploaded PDF, or an online feed. |
 | **Cart** (سبد خرید) | Goods a shopper picked. Not an order yet. |
-| **Wish note** (درخواست کالای ناموجود) | Free text in the cart: "I want this item; if you find it, give it to me." |
-| **Request** (درخواست) | A submitted cart. Staff must confirm stock and price before the shopper can pay. |
+| **Wish note / Cart note** (توضیحات سبد) | Free text in the cart: goods not in the shop, or more than the quantity limit. Saved by itself while typed. Can be sent with an empty cart. Staff see it as «تیکت». |
+| **Account** (حساب کاربری) | A shopper's login: full name, mobile (the login name), optional email, password. Needed only to send a request. |
+| **Unit** (واحد) | A product is sold per piece (عدد) or per pair (جفت). Prices are per unit. Cart limit: 4 pieces or 2 pairs. |
+| **Confirmation deadline** (مهلت تأیید) | Hours staff give the shopper to accept a confirmed request (default 12). After it the request is expired (منقضی). |
+| **Support phone** (شماره پشتیبانی) | Set in admin settings; shoppers call or message it, e.g. to reset a password. |
+| **Request** (درخواست) | A submitted cart. Staff may edit rows, then confirm (with a deadline) or reject. The shopper accepts or declines. «ویرایش فاکتور» sends a confirmed or accepted request back to awaiting; staff confirm again and the shopper accepts again. Staff may give each row a discount percent (default 0), and the whole invoice a discount (percent or amount). Statuses: awaiting, confirmed, accepted, cancelled, rejected, declined, expired. The shopper sees awaiting as «در انتظار تأیید فروشگاه». |
 | **Confirmation** (تایید) | Staff (and for a bazaar warehouse, its owner) agree to stock and price. Opens payment. Each product names its warehouse, so staff know whom to ask. |
 | **Order** (سفارش) | A confirmed request. Has a status. |
 | **Order status** (وضعیت سفارش) | received → awaiting payment → payment confirmed → being collected → shipped (Tipax / post / other courier). |

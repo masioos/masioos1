@@ -1,16 +1,18 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { groupFa } from "@/lib/money";
 import { Input } from "@/components/ui/input";
-import { isUuid, normalizeCode } from "../rules";
+import type { ReactNode } from "react";
+import Link from "next/link";
+import { DEFAULT_SHOP_PAGE_SIZE, isUuid, normalizeCode, shopPageSize, type Unit } from "../rules";
 import {
   getProductByCode,
   listFilterOptions,
   listOtherModels,
-  PAGE_SIZE,
   searchProducts,
 } from "../service";
 import { categoryOptions, selectClass } from "./options";
+import { PageSizeSelect } from "./page-size-select";
 import { Pager } from "./pager";
 import { Photo } from "./photo";
 import { PriceText, ProductGrid, UnavailableBadge } from "./product-card";
@@ -58,10 +60,13 @@ export async function ShopSearch({ searchParams }: { searchParams: SearchParams 
     brandId: uuidOrEmpty(sp.brand),
     countryId: uuidOrEmpty(sp.country),
     page: Math.max(1, Math.min(1000, Number(one(sp.page)) || 1)),
+    pageSize: shopPageSize(one(sp.size)),
   };
   const [options, { items, total }] = await Promise.all([listFilterOptions(), searchProducts(s)]);
   const params = { q: s.q, car: s.carId, category: s.categoryId, brand: s.brandId, country: s.countryId };
   const filtered = Object.values(params).some(Boolean);
+  // The page size is kept in every link, but only when it is not the default.
+  const pagerParams = { ...params, size: s.pageSize === DEFAULT_SHOP_PAGE_SIZE ? "" : String(s.pageSize) };
 
   return (
     <div className="flex flex-col gap-5">
@@ -94,17 +99,33 @@ export async function ShopSearch({ searchParams }: { searchParams: SearchParams 
             </Link>
           )}
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-muted-foreground text-sm">{groupFa(total)} کالا</p>
+          <PageSizeSelect value={s.pageSize} />
+        </div>
       </form>
 
-      <p className="text-muted-foreground text-sm">{total.toLocaleString("fa-IR")} کالا</p>
       {items.length === 0 ? <p>کالایی با این مشخصات پیدا نشد.</p> : <ProductGrid products={items} />}
-      <Pager basePath="/" params={params} page={s.page} pages={Math.ceil(total / PAGE_SIZE)} />
+      <Pager basePath="/" params={pagerParams} page={s.page} pages={Math.ceil(total / s.pageSize)} />
     </div>
   );
 }
 
-/** The product page. Inactive or unknown code → 404. */
-export async function ProductDetails({ params }: { params: Promise<{ code: string }> }) {
+/** What another module (the cart) needs to place its button on the product page. */
+export type ProductAction = (p: { id: string; unit: Unit; isUnavailable: boolean }) => ReactNode;
+
+/**
+ * The product page. Inactive or unknown code → 404.
+ * `action` lets the page place the add-to-cart button without catalog importing the cart module.
+ */
+export async function ProductDetails({
+  params,
+  action,
+}: {
+  params: Promise<{ code: string }>;
+  action?: ProductAction;
+}) {
   const { code } = await params;
   const product = await getProductByCode(normalizeCode(code));
   if (!product) notFound();
@@ -141,18 +162,17 @@ export async function ProductDetails({ params }: { params: Promise<{ code: strin
         <div className="flex flex-col gap-4">
           <h1 className="text-2xl font-bold">{product.name}</h1>
           <div className="flex items-center gap-3 text-lg">
-            <PriceText toman={product.shopPriceToman} />
+            <PriceText toman={product.shopPriceToman} unit={product.unit} />
             {product.isUnavailable && <UnavailableBadge />}
           </div>
+          {action?.({ id: product.id, unit: product.unit, isUnavailable: product.isUnavailable })}
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
             {fields
               .filter(([, v]) => v)
               .map(([k, v]) => (
                 <div key={k} className="contents">
                   <dt className="text-muted-foreground">{k}</dt>
-                  <dd dir={k === "کد فنی" ? "ltr" : undefined} className="text-start">
-                    {v}
-                  </dd>
+                  <dd className="text-start">{k === "کد فنی" ? <span dir="ltr" className="inline-block">{v}</span> : v}</dd>
                 </div>
               ))}
           </dl>

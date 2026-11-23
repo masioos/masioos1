@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { PriceInput } from "@/components/price-input";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,6 +30,7 @@ export type ProductFormValues = {
   partGroupId: string | null;
   description: string;
   purchasePriceToman: number | null;
+  unit: "piece" | "pair";
   carIds: string[];
 };
 
@@ -122,15 +124,19 @@ export function ProductForm({
           options={asOptions(options.partGroups)}
           value={text("partGroupId")}
         />
+        <Select
+          name="unit"
+          label="واحد فروش"
+          options={[
+            { id: "piece", label: "عدد" },
+            { id: "pair", label: "جفت" },
+          ]}
+          value={text("unit") || "piece"}
+          required
+        />
         <div className="grid gap-1.5">
           <Label htmlFor="purchasePriceToman">قیمت خرید (تومان) — خالی یعنی «برای قیمت تماس بگیرید»</Label>
-          <Input
-            id="purchasePriceToman"
-            name="purchasePriceToman"
-            defaultValue={text("purchasePriceToman")}
-            inputMode="numeric"
-            dir="ltr"
-          />
+          <PriceInput id="purchasePriceToman" name="purchasePriceToman" defaultValue={text("purchasePriceToman")} />
         </div>
       </div>
 

@@ -1,0 +1,1 @@
+ALTER TABLE "catalog_products" ADD COLUMN "unit" text DEFAULT 'piece' NOT NULL;

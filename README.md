@@ -95,8 +95,12 @@ idea → /grill → /plan → /build → you test it → /review → /ship
 | کالاها | http://localhost:3000/admin/catalog |
 | ورود کالا از Excel | http://localhost:3000/admin/catalog/import |
 | فهرست‌ها (خودرو، برند، کشور، دسته، گروه قطعه) | http://localhost:3000/admin/catalog/lists |
+| سبد خرید | http://localhost:3000/cart |
+| درخواست‌ها (مدیر) | http://localhost:3000/admin/requests |
+| مشتری‌ها و رمز تازه | http://localhost:3000/admin/customers |
+| تنظیمات (شماره پشتیبانی) | http://localhost:3000/admin/settings |
 
-بقیه‌ی بخش‌ها (سبد خرید، سفارش، پرداخت، حسابداری) با دستور `/next` یکی‌یکی ساخته می‌شوند.
+بقیه‌ی بخش‌ها (پرداخت، وضعیت سفارش، حسابداری) با دستور `/next` یکی‌یکی ساخته می‌شوند.
 
 </div>
 
