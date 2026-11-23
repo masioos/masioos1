@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { ProductDetails } from "@/modules/catalog";
+import { AddToCartButton } from "@/modules/requests";
 
 // Product page. Stable URL /p/<technical code> (Torob, #7, will link here).
 export default function ProductPage(props: PageProps<"/p/[code]">) {
@@ -10,7 +11,10 @@ export default function ProductPage(props: PageProps<"/p/[code]">) {
         بازگشت به فروشگاه
       </Link>
       <Suspense fallback={<p>در حال بارگذاری…</p>}>
-        <ProductDetails params={props.params} />
+        <ProductDetails
+          params={props.params}
+          action={(p) => <AddToCartButton productId={p.id} unit={p.unit} isUnavailable={p.isUnavailable} />}
+        />
       </Suspense>
     </main>
   );

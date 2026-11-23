@@ -6,6 +6,8 @@ import {
   formatToman,
   isSafePhotoName,
   isUuid,
+  maxQuantity,
+  unitPriceLabel,
   normalizeName,
   normalizeCode,
   normalizeSearch,
@@ -56,7 +58,7 @@ describe("rialToToman", () => {
 
 describe("formatToman", () => {
   it("uses Persian digits and separators", () => {
-    expect(formatToman(2_587_000)).toBe("۲٬۵۸۷٬۰۰۰ تومان");
+    expect(formatToman(2_587_000)).toBe("۲/۵۸۷/۰۰۰ تومان");
   });
 });
 
@@ -69,6 +71,14 @@ describe("normalizeSearch", () => {
   });
   it("half-space, Arabic kaf, case and extra spaces", () => {
     expect(normalizeSearch("  ديسك‌چرخ   ISACO ")).toBe("دیسک چرخ isaco");
+  });
+  it("«ارم» finds «آرم», and other letter forms fold together", () => {
+    expect(normalizeSearch("آرم")).toBe(normalizeSearch("ارم"));
+    expect(normalizeSearch("إسکله أصلی")).toBe("اسکله اصلی");
+    expect(normalizeSearch("خانۀ")).toBe("خانه");
+    expect(normalizeSearch("مسئول مؤسسه")).toBe("مسیول موسسه");
+    expect(normalizeSearch("قطعـه")).toBe("قطعه");
+    expect(normalizeSearch("مُهره")).toBe("مهره");
   });
   it("search text holds name, code and brand; each query word is found in it", () => {
     const text = buildSearchText("بلبرینگ چرخ جلو - ژاپن - پژو 405", "0270202420", "ایساکو");
@@ -221,5 +231,21 @@ describe("isUuid", () => {
   it("refuses 36 dashes", () => {
     expect(isUuid("-".repeat(36))).toBe(false);
     expect(isUuid("6f1c1f3e-8a1b-4c2d-9e3f-0a1b2c3d4e5f")).toBe(true);
+  });
+});
+
+describe("unit", () => {
+  it("label next to the price", () => {
+    expect(unitPriceLabel("piece")).toBe("قیمت یک عدد");
+    expect(unitPriceLabel("pair")).toBe("قیمت یک جفت");
+  });
+  it("cart limit: 4 pieces or 2 pairs", () => {
+    expect(maxQuantity("piece")).toBe(4);
+    expect(maxQuantity("pair")).toBe(2);
+  });
+  it("form unit defaults to piece and refuses other values", () => {
+    const base = { warehouseId: "6f1c1f3e-8a1b-4c2d-9e3f-0a1b2c3d4e5f", code: "X1", name: "قطعه" };
+    expect(productFormSchema.parse(base).unit).toBe("piece");
+    expect(productFormSchema.safeParse({ ...base, unit: "box" }).success).toBe(false);
   });
 });

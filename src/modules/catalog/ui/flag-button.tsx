@@ -24,6 +24,7 @@ export function FlagButton({
         size="xs"
         variant={on ? "secondary" : "destructive"}
         title="برای تغییر کلیک کنید"
+        aria-label={label}
       >
         {label}
       </Button>

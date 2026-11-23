@@ -1,11 +1,17 @@
 import Link from "next/link";
-import { formatToman } from "../rules";
+import { formatToman, unitPriceLabel, type Unit } from "../rules";
 import type { ShopProduct } from "../service";
 import { Photo } from "./photo";
 
-export function PriceText({ toman }: { toman: number | null }) {
+/** The shop price, with «قیمت یک عدد / یک جفت» in small type under it. */
+export function PriceText({ toman, unit }: { toman: number | null; unit?: Unit }) {
   if (toman === null) return <span className="text-muted-foreground">برای قیمت تماس بگیرید</span>;
-  return <span className="font-bold">{formatToman(toman)}</span>;
+  return (
+    <span className="flex flex-col">
+      <span className="font-bold">{formatToman(toman)}</span>
+      {unit && <span className="text-muted-foreground text-[0.7rem] font-normal">{unitPriceLabel(unit)}</span>}
+    </span>
+  );
 }
 
 export function UnavailableBadge() {
@@ -35,7 +41,7 @@ export function ProductCard({ product }: { product: ShopProduct }) {
         {[product.brandName, product.countryName].filter(Boolean).join(" · ") || " "}
       </p>
       <div className="mt-auto flex items-center justify-between gap-2 text-sm">
-        <PriceText toman={product.shopPriceToman} />
+        <PriceText toman={product.shopPriceToman} unit={product.unit} />
         {product.isUnavailable && <UnavailableBadge />}
       </div>
     </Link>

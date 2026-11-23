@@ -12,6 +12,7 @@ import {
   isSafePhotoName,
   MAX_PHOTO_BYTES,
   MAX_PHOTOS_PER_PRODUCT,
+  normalizeCode,
   PHOTO_CONTENT_TYPES,
   searchWords,
   shopPriceToman,
@@ -19,6 +20,7 @@ import {
   type ListKind,
   type ProductInput,
   type StockRow,
+  type Unit,
 } from "./rules";
 import {
   catalogBrands,
@@ -164,6 +166,7 @@ function productValues(input: ProductInput, brand: string | null) {
     countryId: input.countryId,
     partGroupId: input.partGroupId,
     description: input.description,
+    unit: input.unit,
     purchasePriceToman: input.purchasePriceToman,
     searchText: buildSearchText(input.name, input.code, brand),
   };
@@ -461,6 +464,7 @@ export type ShopProduct = {
   countryName: string | null;
   shopPriceToman: number | null;
   isUnavailable: boolean;
+  unit: Unit;
   photo: string | null;
 };
 
@@ -477,6 +481,7 @@ const shopColumns = {
   warehouseId: catalogProducts.warehouseId,
   purchasePriceToman: catalogProducts.purchasePriceToman,
   isUnavailable: catalogProducts.isUnavailable,
+  unit: catalogProducts.unit,
   brandName: catalogBrands.name,
   countryName: catalogCountries.name,
   photo: firstPhoto,
@@ -489,6 +494,7 @@ type ShopRow = {
   warehouseId: string;
   purchasePriceToman: number | null;
   isUnavailable: boolean;
+  unit: Unit;
   brandName: string | null;
   countryName: string | null;
   photo: string | null;
@@ -518,6 +524,7 @@ export type ShopSearch = {
   brandId?: string;
   countryId?: string;
   page: number;
+  pageSize: number;
 };
 
 export async function searchProducts(s: ShopSearch): Promise<{ items: ShopProduct[]; total: number }> {
@@ -548,8 +555,8 @@ export async function searchProducts(s: ShopSearch): Promise<{ items: ShopProduc
     shopQuery()
       .where(cond)
       .orderBy(asc(catalogProducts.isUnavailable), asc(catalogProducts.name))
-      .limit(PAGE_SIZE)
-      .offset((s.page - 1) * PAGE_SIZE),
+      .limit(s.pageSize)
+      .offset((s.page - 1) * s.pageSize),
     db.select({ total: count() }).from(catalogProducts).where(cond),
   ]);
   return { items: await toShop(rows), total };
@@ -639,4 +646,51 @@ export async function listProductFormOptions() {
     countries,
     partGroups,
   };
+}
+
+// ── For the cart and requests (#5) ─────────────────────────────────────────────────────
+
+export type CartProduct = {
+  id: string;
+  code: string;
+  name: string;
+  unit: Unit;
+  shopPriceToman: number | null;
+  isActive: boolean;
+  isUnavailable: boolean;
+  warehouseId: string;
+};
+
+/** Today's state of the given products, with the shop price (never the purchase price). */
+export async function getCartProducts(ids: readonly string[]): Promise<CartProduct[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({
+      id: catalogProducts.id,
+      code: catalogProducts.code,
+      name: catalogProducts.name,
+      unit: catalogProducts.unit,
+      purchasePriceToman: catalogProducts.purchasePriceToman,
+      isActive: catalogProducts.isActive,
+      isUnavailable: catalogProducts.isUnavailable,
+      warehouseId: catalogProducts.warehouseId,
+    })
+    .from(catalogProducts)
+    .where(inArray(catalogProducts.id, [...new Set(ids)]));
+  const profits = await getWarehouseProfits(rows.map((r) => r.warehouseId));
+  return rows.map(({ purchasePriceToman, ...r }) => ({
+    ...r,
+    shopPriceToman: shopPriceToman(purchasePriceToman, profits.get(r.warehouseId) ?? 0),
+  }));
+}
+
+/** Staff adding a row to a request by technical code. Any product, active or not. */
+export async function getProductForStaff(code: string): Promise<CartProduct | null> {
+  const [row] = await db
+    .select({ id: catalogProducts.id })
+    .from(catalogProducts)
+    .where(eq(catalogProducts.code, normalizeCode(code)));
+  if (!row) return null;
+  const [p] = await getCartProducts([row.id]);
+  return p ?? null;
 }

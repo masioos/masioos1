@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { groupFa } from "@/lib/money";
 
 // Pure rules of the catalog module: no DB, no React, no I/O. Tests live next to this file.
 // The shop-price rule lives here until the `pricing` module is built (#8), then moves there.
@@ -34,12 +35,12 @@ export function rialToToman(rial: number | null | undefined): number | null {
 
 /** 2587000 → «۲٬۵۸۷٬۰۰۰ تومان». */
 export function formatToman(toman: number): string {
-  return `${toman.toLocaleString("fa-IR")} تومان`;
+  return `${groupFa(toman)} تومان`;
 }
 
 /** Reads a price typed by staff: Persian digits and thousands separators allowed. "" → null. */
 export function parsePriceText(input: string): number | null | "invalid" {
-  const text = toAsciiDigits(input).replace(/[,،٬\s]/g, "");
+  const text = toAsciiDigits(input).replace(/[,،٬/\s]/g, "");
   if (text === "") return null;
   if (!/^\d+$/.test(text)) return "invalid";
   const n = Number(text);
@@ -52,12 +53,18 @@ export const MAX_PRICE_TOMAN = 1_000_000_000_000;
 // ── Text ───────────────────────────────────────────────────────────────────────────────
 
 /**
- * One form for searching: Arabic ي/ك → Persian ی/ک, Persian/Arabic digits → ASCII,
- * ZWNJ (half-space) → space, Latin lower-case, spaces collapsed. Used on stored text and on queries.
+ * One form for searching: Arabic ي/ك → Persian ی/ک, آ/أ/إ → ا, ة/ۀ → ه, ؤ → و, ئ → ی,
+ * short vowels and tatweel removed, Persian/Arabic digits → ASCII, ZWNJ (half-space) → space,
+ * Latin lower-case, spaces collapsed. Used on stored text and on queries, so «ارم» finds «آرم».
+ * Keep in step with the SQL in migration 0004_search_letters.
  */
 export function normalizeSearch(input: string): string {
   return toAsciiDigits(input)
-    .replace(/[يى]/g, "ی")
+    .replace(/[ً-ٰٟـ]/g, "")
+    .replace(/[آأإٱ]/g, "ا")
+    .replace(/[ةۀ]/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/[يىئ]/g, "ی")
     .replace(/ك/g, "ک")
     .replace(/[\u200c\u200e\u200f]/g, " ")
     .toLowerCase()
@@ -97,6 +104,18 @@ export function searchWords(query: string): string[] {
   return normalizeSearch(query).split(" ").filter(Boolean).slice(0, 8);
 }
 
+// ── Shop pages ─────────────────────────────────────────────────────────────────────────
+
+/** How many goods one shop page shows; the shopper picks one. */
+export const SHOP_PAGE_SIZES = [12, 24, 48, 96] as const;
+export const DEFAULT_SHOP_PAGE_SIZE = 24;
+
+/** A page size from the address bar; anything not offered → the default. */
+export function shopPageSize(raw: string): number {
+  const n = Number(raw);
+  return (SHOP_PAGE_SIZES as readonly number[]).includes(n) ? n : DEFAULT_SHOP_PAGE_SIZE;
+}
+
 // ── Cart ───────────────────────────────────────────────────────────────────────────────
 
 /** Used by the cart (#5). A product with no price can still be added («برای قیمت تماس بگیرید»). */
@@ -134,6 +153,7 @@ export const productFormSchema = z.object({
     .default([])
     .transform((ids) => [...new Set(ids)]),
   description: z.string().trim().max(5000).default(""),
+  unit: z.enum(["piece", "pair"]).default("piece"),
   purchasePriceToman: z
     .string()
     .default("")
@@ -271,4 +291,21 @@ export function parseStockSheetRows(rows: readonly (readonly unknown[])[]): Stoc
 /** A real UUID (not just 36 dashes): ids from the URL are checked before they reach the database. */
 export function isUuid(value: string): boolean {
   return z.uuid().safeParse(value).success;
+}
+
+// ── Unit (piece / pair) ────────────────────────────────────────────────────────────────
+
+export const units = ["piece", "pair"] as const;
+export type Unit = (typeof units)[number];
+
+export const UNIT_NAMES: Record<Unit, string> = { piece: "عدد", pair: "جفت" };
+
+/** The small text next to a price: «قیمت یک عدد» / «قیمت یک جفت». */
+export function unitPriceLabel(unit: Unit): string {
+  return `قیمت یک ${UNIT_NAMES[unit]}`;
+}
+
+/** Most a shopper can put in the cart per product: 4 pieces or 2 pairs. More → the cart note. */
+export function maxQuantity(unit: Unit): number {
+  return unit === "pair" ? 2 : 4;
 }

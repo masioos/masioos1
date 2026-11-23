@@ -75,6 +75,8 @@ export const catalogProducts = pgTable(
     purchasePriceToman: bigint("purchase_price_toman", { mode: "number" }),
     isActive: boolean("is_active").notNull().default(true),
     isUnavailable: boolean("is_unavailable").notNull().default(false),
+    // Sold per piece (عدد) or per pair (جفت). Prices are per unit.
+    unit: text("unit", { enum: ["piece", "pair"] }).notNull().default("piece"),
     // normalizeSearch(name + code + brand). Written by the app on every save, so search is one ILIKE.
     searchText: text("search_text").notNull().default(""),
     createdAt: createdAt(),

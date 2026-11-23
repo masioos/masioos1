@@ -15,6 +15,48 @@
       "when": 1795276023896,
       "tag": "0001_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795426106747,
+      "tag": "0002_product_unit",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795426275824,
+      "tag": "0003_cart_requests_customers",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795431254906,
+      "tag": "0004_search_letters",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795435265889,
+      "tag": "0005_shopper_messages",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795443667709,
+      "tag": "0006_row_discount",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795444388532,
+      "tag": "0007_invoice_discount",
+      "breakpoints": true
     }
   ]
 }

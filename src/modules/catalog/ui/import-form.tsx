@@ -1,12 +1,13 @@
 "use client";
 
 import { useActionState } from "react";
+import { groupFa } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { importStockSheetAction } from "../actions";
 import { selectClass } from "./options";
 
-const fa = (n: number) => n.toLocaleString("fa-IR");
+const fa = (n: number) => groupFa(n);
 
 export function ImportForm({ warehouses }: { warehouses: { id: string; name: string }[] }) {
   const [state, formAction, pending] = useActionState(importStockSheetAction, {});

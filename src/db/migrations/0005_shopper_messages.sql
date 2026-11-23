@@ -1,0 +1,2 @@
+ALTER TABLE "requests_messages" ADD COLUMN "from_shopper" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "requests_requests" ADD COLUMN "staff_unread_message_at" timestamp with time zone;
