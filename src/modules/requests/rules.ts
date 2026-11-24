@@ -140,6 +140,36 @@ export function requestTotal(rows: readonly Row[]): { total: number; hasUnpriced
   return { total, hasUnpriced };
 }
 
+export type ProfitRow = Row & { purchasePriceToman?: number | null; manualProfitToman?: number | null };
+
+/**
+ * Staff only: a row's profit = its amount after the row discount − purchase price × quantity.
+ * A row with no purchase price (a free row) uses the profit staff typed for it.
+ * null when it cannot be known, or the row is unavailable.
+ */
+export function rowProfit(r: ProfitRow): number | null {
+  if (r.isUnavailable) return null;
+  if (r.purchasePriceToman == null) return r.manualProfitToman ?? null;
+  if (r.priceToman === null) return null;
+  return rowTotal({ ...r, priceToman: r.priceToman }) - r.purchasePriceToman * r.quantity;
+}
+
+/** Profit of the invoice: rows' profits less the whole-invoice discount. `incomplete` = some row's profit is unknown. */
+export function profitTotal(
+  rows: readonly ProfitRow[],
+  invoiceDiscount: number,
+): { total: number; incomplete: boolean } {
+  let total = 0;
+  let incomplete = false;
+  for (const r of rows) {
+    if (r.isUnavailable) continue;
+    const p = rowProfit(r);
+    if (p === null) incomplete = true;
+    else total += p;
+  }
+  return { total: total - invoiceDiscount, incomplete };
+}
+
 export type DiscountKind = "none" | "percent" | "amount";
 
 export type InvoiceTotals = {
@@ -150,6 +180,11 @@ export type InvoiceTotals = {
   total: number;
   hasUnpriced: boolean;
 };
+
+/** The «تعداد» total under the invoice: units of the rows that are not unavailable. */
+export function quantityTotal(rows: readonly { quantity: number; isUnavailable: boolean }[]): number {
+  return rows.reduce((n, r) => (r.isUnavailable ? n : n + r.quantity), 0);
+}
 
 /** Request total with the whole-invoice discount: a percent of the rows' sum, or a fixed amount. */
 export function invoiceTotals(rows: readonly Row[], d: { kind: DiscountKind; value: number }): InvoiceTotals {
@@ -218,6 +253,8 @@ export const rowEditSchema = z.object({
   discountPercent: optionalWhole(`تخفیف باید بین ۰ و ${MAX_DISCOUNT_PERCENT} درصد باشد`, 0, MAX_DISCOUNT_PERCENT).transform(
     (n) => n ?? 0,
   ),
+  // Only rows with no purchase price send it; empty = not known yet.
+  manualProfitToman: optionalWhole("پرافیت باید یک عدد به تومان باشد", 0, 1_000_000_000_000),
 });
 
 export const addRowSchema = z
@@ -264,3 +301,45 @@ export const rejectSchema = z.object({
   requestId: z.uuid(),
   message: z.string().trim().min(3, "برای رد، دلیل را در کادر پیام بنویسید").max(2000),
 });
+
+// ── Staff list tabs ────────────────────────────────────────────────────────────────────
+
+export type StaffTab = "new" | "working" | "paid" | "void" | "all";
+
+export const STAFF_TABS: readonly { tab: StaffTab; name: string }[] = [
+  { tab: "new", name: "تازه" },
+  { tab: "working", name: "در حال انجام" },
+  { tab: "paid", name: "پرداخت شده" },
+  { tab: "void", name: "باطل شده" },
+  { tab: "all", name: "همه" },
+];
+
+export function parseStaffTab(v: unknown): StaffTab {
+  return STAFF_TABS.some((t) => t.tab === v) ? (v as StaffTab) : "new";
+}
+
+/**
+ * Which tab a request sits in (besides «همه»):
+ * new = awaiting and never opened by staff; working = opened, awaiting or confirmed;
+ * paid = the shopper accepted (no payment gateway yet, so «accepted» stands for paid);
+ * void = rejected, cancelled, declined or expired.
+ */
+export function staffTabOf(r: { status: Status; staffSeenAt: Date | null }): Exclude<StaffTab, "all"> {
+  switch (r.status) {
+    case "awaiting":
+      return r.staffSeenAt === null ? "new" : "working";
+    case "confirmed":
+      return "working";
+    case "accepted":
+      return "paid";
+    default:
+      return "void";
+  }
+}
+
+/** Purchase price and profit are staff-only: blank them before a request reaches a shopper. */
+export function hideStaffOnly<T extends { purchasePriceToman: number | null; manualProfitToman: number | null }>(
+  rows: readonly T[],
+): T[] {
+  return rows.map((x) => ({ ...x, purchasePriceToman: null, manualProfitToman: null }));
+}

@@ -80,6 +80,10 @@ export const requestsRows = pgTable("requests_rows", {
   // Shop price per unit, whole Toman. null = still unknown («برای قیمت تماس بگیرید»).
   priceToman: bigint("price_toman", { mode: "number" }),
   isUnavailable: boolean("is_unavailable").notNull().default(false),
+  // Staff only: purchase price per unit on the day the row was made (rules.rowProfit). null = unknown.
+  purchasePriceToman: bigint("purchase_price_toman", { mode: "number" }),
+  // Staff only: profit typed by hand for a row with no purchase price (a free row). Whole Toman.
+  manualProfitToman: bigint("manual_profit_toman", { mode: "number" }),
   // Staff discount on this row, whole percent 0–100 (rules.rowTotal).
   discountPercent: integer("discount_percent").notNull().default(0),
   addedByStaff: boolean("added_by_staff").notNull().default(false),

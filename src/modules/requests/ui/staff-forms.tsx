@@ -19,6 +19,7 @@ import {
 } from "../actions";
 import { DEFAULT_DEADLINE_HOURS, MAX_DEADLINE_HOURS, rowTotal, type DiscountKind, type Unit } from "../rules";
 import { fa, selectClass, textareaClass, toman, UNIT_NAMES } from "./format";
+import { ProfitCell, profitCellClass } from "./request-view";
 
 function Status({ state, pending, ok = "ذخیره شد" }: { state: FormState; pending: boolean; ok?: string }) {
   if (state.error) return <span className="text-destructive text-sm">{state.error}</span>;
@@ -44,6 +45,8 @@ export function RowEditForm({
   discountPercent,
   isUnavailable,
   warehouse,
+  purchasePrice,
+  manualProfit,
 }: {
   index: number;
   rowId: string;
@@ -55,6 +58,8 @@ export function RowEditForm({
   discountPercent: number;
   isUnavailable: boolean;
   warehouse: string;
+  purchasePrice: number | null;
+  manualProfit: number | null;
 }) {
   const [state, formAction, pending] = useActionState(editRowAction, {});
   const [, startTransition] = useTransition();
@@ -166,6 +171,24 @@ export function RowEditForm({
           ) : null}
         </form>
       </TableCell>
+      {purchasePrice === null ? (
+        // A free row has no purchase price: staff type its profit (saves like the other boxes).
+        <TableCell className={profitCellClass}>
+          <div className="flex items-center gap-1">
+            <PriceInput
+              form={formId}
+              name="manualProfitToman"
+              defaultValue={manualProfit}
+              aria-label="پرافیت این ردیف"
+              placeholder="پرافیت"
+              className="w-28"
+            />
+            <span className="text-xs">تومان</span>
+          </div>
+        </TableCell>
+      ) : (
+        <ProfitCell row={{ priceToman: price, quantity, discountPercent, isUnavailable, purchasePriceToman: purchasePrice }} />
+      )}
     </TableRow>
   );
 }

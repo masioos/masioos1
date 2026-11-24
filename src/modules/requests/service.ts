@@ -1,14 +1,16 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, lte, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { cache } from "react";
 import { db } from "@/db/client";
-import { getCartProducts, getProductForStaff, type CartProduct } from "@/modules/catalog";
+import { getCartProducts, getProductForStaff, getPurchasePrices, type CartProduct } from "@/modules/catalog";
 import { getCurrentCustomer, getCustomersByIds, saveLastAddress } from "@/modules/customers";
 import { listWarehouses } from "@/modules/warehouses";
 import {
+  hideStaffOnly,
+  type StaffTab,
   canConfirm,
   canDo,
   canSubmit,
@@ -208,6 +210,7 @@ export async function submitRequest(customerId: string, address: string): Promis
   const check = canSubmit(view.lines, view.note);
   if (!cartId || !check.ok) return { ok: false, error: check.ok ? "سبد خالی است" : check.error };
   const products = new Map((await getCartProducts(view.lines.map((l) => l.productId))).map((p) => [p.id, p]));
+  const purchase = await getPurchasePrices(view.lines.map((l) => l.productId));
 
   const id = await db.transaction(async (tx) => {
     const now = new Date();
@@ -226,6 +229,7 @@ export async function submitRequest(customerId: string, address: string): Promis
           warehouseId: products.get(l.productId)?.warehouseId ?? null,
           quantity: l.quantity,
           priceToman: l.shopPriceToman,
+          purchasePriceToman: purchase.get(l.productId) ?? null,
           position: i,
         })),
       );
@@ -251,6 +255,8 @@ export type RequestSummary = {
   /** The shopper wrote a note (توضیحات) with the request. */
   hasNote: boolean;
   needsAttention: boolean;
+  /** When staff first opened it since the shopper's last step; null = not opened. */
+  staffSeenAt: Date | null;
 };
 
 async function summaries(
@@ -286,6 +292,7 @@ async function summaries(
       createdAt: r.createdAt,
       rowCount: mine.length,
       hasNote: r.note.trim() !== "",
+      staffSeenAt: forStaff ? r.staffSeenAt : null,
       needsAttention: forStaff
         ? r.staffSeenAt === null || r.staffUnreadMessageAt !== null
         : !!r.customerNotifyAt && (!r.customerSeenAt || r.customerSeenAt < r.customerNotifyAt),
@@ -374,10 +381,10 @@ async function loadRequest(where: SQL): Promise<RequestDetails | null> {
 /** The shopper's own request, or null for someone else's (the page shows "not found"). */
 export async function getMyRequest(customerId: string, id: string) {
   const r = await loadRequest(and(eq(requestsRequests.id, id), eq(requestsRequests.customerId, customerId))!);
-  if (r) {
-    await db.update(requestsRequests).set({ customerSeenAt: new Date() }).where(eq(requestsRequests.id, id));
-  }
-  return r;
+  if (!r) return r;
+  await db.update(requestsRequests).set({ customerSeenAt: new Date() }).where(eq(requestsRequests.id, id));
+  // Purchase prices are staff-only: they never reach a shopper's page.
+  return { ...r, rows: hideStaffOnly(r.rows) };
 }
 
 // ── Status changes ─────────────────────────────────────────────────────────────────────
@@ -430,18 +437,55 @@ export const declineRequest = (customerId: string, id: string, deadlineSeen: Dat
 
 // ── Staff ──────────────────────────────────────────────────────────────────────────────
 
-export type StaffFilter = "open" | "all";
+/** All requests for the staff list; the page splits them into tabs (`staffTabOf`). */
+/** The SQL for one staff tab; the same rule as `staffTabOf` in rules.ts. */
+function tabWhere(tab: StaffTab, now: Date): SQL | undefined {
+  const s = requestsRequests.status;
+  const deadline = requestsRequests.deadlineAt;
+  const expired = and(eq(s, "confirmed"), isNotNull(deadline), lte(deadline, now));
+  switch (tab) {
+    case "new":
+      return and(eq(s, "awaiting"), isNull(requestsRequests.staffSeenAt));
+    case "working":
+      return or(
+        and(eq(s, "awaiting"), isNotNull(requestsRequests.staffSeenAt)),
+        and(eq(s, "confirmed"), or(isNull(deadline), gt(deadline, now))),
+      );
+    case "paid":
+      return eq(s, "accepted");
+    case "void":
+      return or(inArray(s, ["rejected", "cancelled", "declined"]), expired);
+    case "all":
+      return undefined;
+  }
+}
 
-export async function listRequestsForStaff(filter: StaffFilter) {
-  const where =
-    filter === "open"
-      ? or(
-          isNull(requestsRequests.staffSeenAt),
-          isNotNull(requestsRequests.staffUnreadMessageAt),
-          inArray(requestsRequests.status, ["awaiting", "confirmed", "accepted"]),
-        )
-      : undefined;
-  const list = await summaries(where, true);
+/** Per tab: how many requests, and how many need staff attention (new step or unread message). */
+export async function staffTabCounts(): Promise<Record<StaffTab, { n: number; attention: number }>> {
+  await connection();
+  const now = new Date();
+  const tabs: StaffTab[] = ["new", "working", "paid", "void", "all"];
+  const rows = await Promise.all(
+    tabs.map((t) =>
+      db
+        .select({
+          n: count(),
+          attention: sql<number>`count(*) filter (where ${requestsRequests.staffSeenAt} is null or ${requestsRequests.staffUnreadMessageAt} is not null)`.mapWith(Number),
+        })
+        .from(requestsRequests)
+        .where(tabWhere(t, now)),
+    ),
+  );
+  return Object.fromEntries(tabs.map((t, i) => [t, rows[i][0] ?? { n: 0, attention: 0 }])) as Record<
+    StaffTab,
+    { n: number; attention: number }
+  >;
+}
+
+/** One tab of the staff list (newest 200). */
+export async function listRequestsForStaff(tab: StaffTab) {
+  await connection();
+  const list = await summaries(tabWhere(tab, new Date()), true);
   const people = await getCustomersByIds(list.map((r) => r.customerId));
   // New or changed first, then newest.
   return list
@@ -512,12 +556,23 @@ async function whileEditable(requestId: string, write: (tx: Tx) => Promise<void>
 
 export async function editRow(
   rowId: string,
-  v: { priceToman: number | null; quantity: number; isUnavailable: boolean; discountPercent: number },
+  v: {
+    priceToman: number | null;
+    quantity: number;
+    isUnavailable: boolean;
+    discountPercent: number;
+    manualProfitToman: number | null;
+  },
 ): Promise<Result> {
-  const [row] = await db.select({ requestId: requestsRows.requestId }).from(requestsRows).where(eq(requestsRows.id, rowId));
+  const [row] = await db
+    .select({ requestId: requestsRows.requestId, purchasePriceToman: requestsRows.purchasePriceToman })
+    .from(requestsRows)
+    .where(eq(requestsRows.id, rowId));
   if (!row) return { ok: false, error: "ردیف پیدا نشد" };
+  // Only a row with no purchase price takes a typed profit.
+  const set = row.purchasePriceToman === null ? v : { ...v, manualProfitToman: null };
   return whileEditable(row.requestId, async (tx) => {
-    await tx.update(requestsRows).set(v).where(eq(requestsRows.id, rowId));
+    await tx.update(requestsRows).set(set).where(eq(requestsRows.id, rowId));
   });
 }
 
@@ -540,6 +595,7 @@ export async function addRow(
     product = await getProductForStaff(v.code);
     if (!product) return { ok: false, error: "کالایی با این کد فنی پیدا نشد" };
   }
+  const purchasePriceToman = product ? ((await getPurchasePrices([product.id])).get(product.id) ?? null) : null;
   return whileEditable(requestId, async (tx) => {
     const [{ n }] = await tx.select({ n: count() }).from(requestsRows).where(eq(requestsRows.requestId, requestId));
     await tx.insert(requestsRows).values({
@@ -551,6 +607,7 @@ export async function addRow(
       warehouseId: product?.warehouseId ?? null,
       quantity: v.quantity ?? 1,
       priceToman: v.priceToman ?? product?.shopPriceToman ?? null,
+      purchasePriceToman,
       addedByStaff: true,
       position: n,
     });

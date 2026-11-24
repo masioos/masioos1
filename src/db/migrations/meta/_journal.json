@@ -57,6 +57,20 @@
       "when": 1795444388532,
       "tag": "0007_invoice_discount",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795513401633,
+      "tag": "0008_row_purchase_price",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795515052585,
+      "tag": "0009_row_manual_profit",
+      "breakpoints": true
     }
   ]
 }

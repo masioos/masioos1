@@ -694,3 +694,13 @@ export async function getProductForStaff(code: string): Promise<CartProduct | nu
   const [p] = await getCartProducts([row.id]);
   return p ?? null;
 }
+
+/** Staff only (request profit, #15): today's purchase price per product, whole Toman. Never shown to shoppers. */
+export async function getPurchasePrices(ids: readonly string[]): Promise<Map<string, number | null>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({ id: catalogProducts.id, purchase: catalogProducts.purchasePriceToman })
+    .from(catalogProducts)
+    .where(inArray(catalogProducts.id, [...new Set(ids)]));
+  return new Map(rows.map((r) => [r.id, r.purchase]));
+}

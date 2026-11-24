@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { rowTotal, type Status } from "../rules";
+import { quantityTotal, rowProfit, rowTotal, type ProfitRow, type Status } from "../rules";
 import type { RequestDetails } from "../service";
 import { fa, faDateTime, toman, UNIT_NAMES } from "./format";
 
@@ -16,6 +16,18 @@ const STATUS_COLORS: Record<Status, string> = {
 
 export function StatusBadge({ status, names }: { status: Status; names: Record<Status, string> }) {
   return <span className={`rounded-md px-2 py-0.5 text-sm font-medium ${STATUS_COLORS[status]}`}>{names[status]}</span>;
+}
+
+/** The staff «پرافیت» column: last, lighter, set a little apart from the others. */
+export const profitCellClass = "text-muted-foreground border-s border-dashed ps-6";
+
+/** A loss (negative profit) shows in red. */
+const lossClass = "text-destructive";
+
+/** One row's profit for staff, or «—» when unknown. */
+export function ProfitCell({ row }: { row: ProfitRow }) {
+  const p = rowProfit(row);
+  return <TableCell className={`${profitCellClass} ${p !== null && p < 0 ? lossClass : ""}`}>{p === null ? "—" : toman(p)}</TableCell>;
 }
 
 /** Shown under a total that still misses some prices. */
@@ -34,8 +46,11 @@ export function RowsTable({
   discount,
   discountKind,
   discountValue,
+  profit,
 }: Pick<RequestDetails, "rows" | "total" | "hasUnpriced" | "subtotal" | "discount" | "discountKind" | "discountValue"> & {
   warehouseNames?: Record<string, string>;
+  /** Staff only: adds the «پرافیت» column and its total. */
+  profit?: { total: number; incomplete: boolean };
 }) {
   if (rows.length === 0) return <p className="text-muted-foreground text-sm">این درخواست ردیف کالا ندارد.</p>;
   const hasDiscount = rows.some((r) => r.discountPercent > 0);
@@ -52,6 +67,7 @@ export function RowsTable({
             <TableHead>قیمت واحد</TableHead>
             {hasDiscount && <TableHead>تخفیف</TableHead>}
             <TableHead>جمع</TableHead>
+            {profit && <TableHead className={profitCellClass}>پرافیت</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -76,6 +92,7 @@ export function RowsTable({
               <TableCell>
                 {r.priceToman === null || r.isUnavailable ? "—" : toman(rowTotal({ ...r, priceToman: r.priceToman }))}
               </TableCell>
+              {profit && <ProfitCell row={r} />}
             </TableRow>
           ))}
         </TableBody>
@@ -84,6 +101,8 @@ export function RowsTable({
           total={total}
           hasUnpriced={hasUnpriced}
           discount={{ subtotal, amount: discount, label: discountLabel(discountKind, discountValue) }}
+          profit={profit}
+          quantity={profit && { col: warehouseNames ? 3 : 2, total: quantityTotal(rows) }}
         />
       </Table>
     </div>
@@ -98,6 +117,8 @@ export function TotalFooter({
   trailing = 0,
   discount,
   control,
+  profit,
+  quantity,
 }: {
   cols: number;
   total: number;
@@ -108,8 +129,17 @@ export function TotalFooter({
   discount?: { subtotal: number; amount: number; label: string };
   /** Shown beside «جمع کل» (the staff «تخفیف» box). */
   control?: ReactNode;
+  /** Staff only: the «پرافیت» total under its column (the last one). */
+  profit?: { total: number; incomplete: boolean };
+  /** Staff only: the «تعداد» total under that column (`col` = its 0-based place). */
+  quantity?: { col: number; total: number };
 }) {
-  const after = trailing > 0 ? <TableCell colSpan={trailing} /> : null;
+  const after = (
+    <>
+      {trailing > 0 && <TableCell colSpan={trailing} />}
+      {profit && <TableCell className={profitCellClass} />}
+    </>
+  );
   return (
     <TableFooter>
       {discount && discount.amount > 0 && (
@@ -131,17 +161,40 @@ export function TotalFooter({
         </>
       )}
       <TableRow>
-        <TableCell colSpan={cols - 1} className="font-bold">
-          <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
-            {control}
-            <span>جمع کل</span>
-          </div>
-        </TableCell>
+        {quantity ? (
+          <>
+            <TableCell colSpan={quantity.col} className="font-bold">
+              <div className="flex items-center justify-between gap-x-4">
+                <div>{control}</div>
+                <span className="whitespace-nowrap">جمع تعداد</span>
+              </div>
+            </TableCell>
+            <TableCell className="font-bold">{fa(quantity.total)}</TableCell>
+            <TableCell colSpan={cols - 2 - quantity.col} className="text-end font-bold">
+              جمع کل
+            </TableCell>
+          </>
+        ) : (
+          <TableCell colSpan={cols - 1} className="font-bold">
+            <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2">
+              {control}
+              <span>جمع کل</span>
+            </div>
+          </TableCell>
+        )}
         <TableCell className="text-base font-bold">
           {toman(total)}
           {hasUnpriced && <span className="text-muted-foreground block text-xs font-normal whitespace-normal">{UNPRICED_NOTE}</span>}
         </TableCell>
-        {after}
+        {trailing > 0 && <TableCell colSpan={trailing} />}
+        {profit && (
+          <TableCell className={`${profitCellClass} font-bold ${profit.total < 0 ? lossClass : ""}`}>
+            {toman(profit.total)}
+            {profit.incomplete && (
+              <span className="block text-xs font-normal whitespace-normal">بدون ردیف‌هایی که پرافیت ندارند</span>
+            )}
+          </TableCell>
+        )}
       </TableRow>
     </TableFooter>
   );

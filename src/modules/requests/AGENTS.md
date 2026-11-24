@@ -24,7 +24,12 @@ Rules:
   default 0; `rules.rowTotal` rounds the row amount to whole Toman. Shoppers see a «تخفیف» column
   when any row has one.
 - Whole-invoice discount: the «تخفیف» box beside «جمع کل» (percent or Toman amount, saves by
-  itself, only while awaiting). `rules.invoiceTotals` caps it at the rows sum. Confirmation needs every remaining row priced. Deadline:
+  itself, only while awaiting). `rules.invoiceTotals` caps it at the rows sum.
+- Staff «پرافیت» column (#15): row amount after its discount − purchase price × quantity; the total
+  takes off the invoice discount. Rows keep the purchase price of the day they were made
+  (`purchase_price_toman`, from `getPurchasePrices` of catalog). Shoppers never get it: `getMyRequest`
+  blanks it. A row with no purchase price (a free row) gets its profit typed by staff
+  (`manual_profit_toman`, used only when the purchase price is unknown). Confirmation needs every remaining row priced. Deadline:
   staff hours, default 12, max 168.
 - Messages go both ways (`requests_messages.from_shopper`). Staff have one message box: «فرستادن پیام»,
   «تأیید» (sends it too) and «رد» (it is the reason). The shopper may write while awaiting,
