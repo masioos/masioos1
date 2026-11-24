@@ -178,6 +178,7 @@ export function RowEditForm({
             <PriceInput
               form={formId}
               name="manualProfitToman"
+              allowNegative
               defaultValue={manualProfit}
               aria-label="پرافیت این ردیف"
               placeholder="پرافیت"

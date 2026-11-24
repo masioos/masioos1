@@ -218,7 +218,9 @@ const toAscii = (s: string) => s.replace(/[۰-۹]/g, (d) => String(PERSIAN_DIGIT
 function wholeNumber(s: string): number | null | "invalid" {
   const t = toAscii(s).replace(/[,،٬/\s]/g, "");
   if (t === "") return null;
-  return /^\d{1,13}$/.test(t) ? Number(t) : "invalid";
+  // A leading minus («-» or «−») is a negative number; only boxes whose min is below 0 accept it.
+  const m = /^([-−]?)(\d{1,13})$/.exec(t);
+  return m ? (m[1] ? -Number(m[2]) : Number(m[2])) : "invalid";
 }
 
 const optionalWhole = (message: string, min: number, max: number) =>
@@ -254,7 +256,7 @@ export const rowEditSchema = z.object({
     (n) => n ?? 0,
   ),
   // Only rows with no purchase price send it; empty = not known yet.
-  manualProfitToman: optionalWhole("پرافیت باید یک عدد به تومان باشد", 0, 1_000_000_000_000),
+  manualProfitToman: optionalWhole("پرافیت باید یک عدد به تومان باشد (ضرر با منفی)", -1_000_000_000_000, 1_000_000_000_000),
 });
 
 export const addRowSchema = z

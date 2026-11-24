@@ -106,6 +106,11 @@ describe("request", () => {
     const r = rowEditSchema.parse({ rowId: id, priceToman: "۲٬۵۸۷٬۰۰۰", quantity: "۲", isUnavailable: "on" });
     expect(r).toEqual({ rowId: id, priceToman: 2_587_000, quantity: 2, isUnavailable: true, discountPercent: 0, manualProfitToman: null });
     expect(rowEditSchema.parse({ rowId: id, priceToman: "1000", quantity: "1", manualProfitToman: "12/000" }).manualProfitToman).toBe(12_000);
+    // A loss is typed with a minus; a price never can be.
+    expect(rowEditSchema.parse({ rowId: id, priceToman: "1000", quantity: "1", manualProfitToman: "-5/000" }).manualProfitToman).toBe(
+      -5_000,
+    );
+    expect(rowEditSchema.safeParse({ rowId: id, priceToman: "-1000", quantity: "1" }).success).toBe(false);
     expect(rowEditSchema.parse({ rowId: id, priceToman: "1000", quantity: "1", discountPercent: "۵" }).discountPercent).toBe(5);
     expect(rowEditSchema.safeParse({ rowId: id, priceToman: "1000", quantity: "1", discountPercent: "120" }).success).toBe(false);
     // A price of 0 is a typo, not a free item (a free item is a 100% row discount).
