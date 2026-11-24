@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { addressSchema, getCurrentCustomer } from "@/modules/customers";
+import { canSee, requireStaff, type CurrentStaff } from "@/modules/staff";
 import {
   addRowSchema,
   confirmSchema,
@@ -162,11 +163,13 @@ export async function myUnseenCountAction(): Promise<number> {
 
 // ── Staff ──────────────────────────────────────────────────────────────────────────────
 
+/** Every staff action: signed-in staff only (checked in the DB), then the step as that person. */
 async function staffStep(
   prev: FormState,
-  run: () => Promise<{ ok: true } | { ok: false; error: string }>,
+  run: (staff: CurrentStaff) => Promise<{ ok: true } | { ok: false; error: string }>,
 ): Promise<FormState> {
-  const res = await run();
+  const staff = await requireStaff();
+  const res = await run(staff);
   if (!res.ok) return fail(prev, res.error);
   refresh();
   return { ok: true, attempt: (prev.attempt ?? 0) + 1 };
@@ -175,22 +178,26 @@ async function staffStep(
 export async function editRowAction(prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = rowEditSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(prev, first(parsed.error));
-  const { rowId, ...v } = parsed.data;
-  return staffStep(prev, () => editRow(rowId, v));
+  const { rowId, manualProfitToman, ...v } = parsed.data;
+  return staffStep(prev, (by) =>
+    // The typed profit changes only when its box was on the page (staff allowed to see profit);
+    // a save by someone who cannot see it leaves it as it is.
+    editRow(by.id, rowId, formData.has("manualProfitToman") && canSee(by, "profit") ? { ...v, manualProfitToman } : v),
+  );
 }
 
 export async function addRowAction(prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = addRowSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(prev, first(parsed.error));
   const { requestId, ...v } = parsed.data;
-  return staffStep(prev, () => addRow(requestId, v));
+  return staffStep(prev, (by) => addRow(by.id, requestId, v));
 }
 
 export async function invoiceDiscountAction(prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = invoiceDiscountSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(prev, first(parsed.error));
   const { requestId, kind, value } = parsed.data;
-  return staffStep(prev, () => setInvoiceDiscount(requestId, kind, value));
+  return staffStep(prev, (by) => setInvoiceDiscount(by.id, requestId, kind, value));
 }
 
 export async function sendMessageAction(prev: FormState, formData: FormData): Promise<FormState> {
@@ -203,22 +210,23 @@ export async function confirmRequestAction(prev: FormState, formData: FormData):
   const parsed = confirmSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(prev, first(parsed.error));
   const { requestId, hours, message } = parsed.data;
-  return staffStep(prev, () => confirmRequest(requestId, hours, message));
+  return staffStep(prev, (by) => confirmRequest(by.id, requestId, hours, message));
 }
 
 export async function rejectRequestAction(prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = rejectSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(prev, first(parsed.error));
-  return staffStep(prev, () => rejectRequest(parsed.data.requestId, parsed.data.message));
+  return staffStep(prev, (by) => rejectRequest(by.id, parsed.data.requestId, parsed.data.message));
 }
 
 export async function reopenRequestAction(prev: FormState, formData: FormData): Promise<FormState> {
   const parsed = requestIdSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return fail(prev, first(parsed.error));
-  return staffStep(prev, () => reopenRequest(parsed.data.requestId));
+  return staffStep(prev, (by) => reopenRequest(by.id, parsed.data.requestId));
 }
 
 /** Polled by the admin alert every few seconds. */
 export async function staffAlertCountsAction(): Promise<{ steps: number; messages: number }> {
+  await requireStaff();
   return staffAlertCounts();
 }

@@ -46,7 +46,10 @@ export function RowEditForm({
   isUnavailable,
   warehouse,
   purchasePrice,
+  hasPurchasePrice,
+  savedProfit,
   manualProfit,
+  showProfit,
 }: {
   index: number;
   rowId: string;
@@ -58,8 +61,14 @@ export function RowEditForm({
   discountPercent: number;
   isUnavailable: boolean;
   warehouse: string;
+  /** null when the row has none, or this staff member may not see it. */
   purchasePrice: number | null;
+  hasPurchasePrice: boolean;
+  /** The row profit as last saved, for staff who see profit but not the purchase price. */
+  savedProfit: number | null;
   manualProfit: number | null;
+  /** The «پرافیت» cell: only for staff allowed to see profit. */
+  showProfit: boolean;
 }) {
   const [state, formAction, pending] = useActionState(editRowAction, {});
   const [, startTransition] = useTransition();
@@ -171,7 +180,7 @@ export function RowEditForm({
           ) : null}
         </form>
       </TableCell>
-      {purchasePrice === null ? (
+      {!showProfit ? null : !hasPurchasePrice ? (
         // A free row has no purchase price: staff type its profit (saves like the other boxes).
         <TableCell className={profitCellClass}>
           <div className="flex items-center gap-1">
@@ -188,7 +197,14 @@ export function RowEditForm({
           </div>
         </TableCell>
       ) : (
-        <ProfitCell row={{ priceToman: price, quantity, discountPercent, isUnavailable, purchasePriceToman: purchasePrice }} />
+        <ProfitCell
+          row={
+            purchasePrice !== null
+              ? { priceToman: price, quantity, discountPercent, isUnavailable, purchasePriceToman: purchasePrice }
+              : // No purchase price on this page: show the saved profit as it is.
+                { priceToman: price, quantity, discountPercent, isUnavailable, purchasePriceToman: null, manualProfitToman: savedProfit }
+          }
+        />
       )}
     </TableRow>
   );

@@ -31,7 +31,10 @@ One word, one meaning. Use these words in code, issues and chat. Persian in brac
 | **Payee card** (کارت مقصد) | The card one order is paid to. Recorded for accounting. |
 | **Accounting** (حسابداری) | Our own accounting software, inside this app as a module. Every paid order becomes an invoice there. |
 | **Invoice** (فاکتور) | The accounting record of a sale: who bought what, for how much, paid to which warehouse's card. |
-| **Staff** (اپراتور) | The 1–3 people who confirm requests and run the admin. |
+| **Staff** (اپراتور) | The people who sign in to the admin with mobile and password: one **manager** (مدیر) and several **sellers** (فروشنده). |
+| **Manager** (مدیر) | Alireza. Manages staff, settings, warehouses and products; always sees purchase price and profit. |
+| **Seller** (فروشنده) | Staff who work on requests. Sees purchase price and profit only if the manager allows each one for that seller. Never deleted, only made inactive. |
+| **Request history** (تاریخچه) | Under each invoice: which staff member confirmed, rejected, reopened or edited it, and when. «آخرین رسیدگی» is the newest one. |
 | **Shopper** (مشتری) | A person buying in the shop. |
 
 Open questions from the notes (to settle in `/grill`):

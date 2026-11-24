@@ -71,6 +71,20 @@
       "when": 1795515052585,
       "tag": "0009_row_manual_profit",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795523762753,
+      "tag": "0010_staff",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795527826390,
+      "tag": "0011_staff_sign_in_failures",
+      "breakpoints": true
     }
   ]
 }

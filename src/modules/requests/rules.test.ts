@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  HISTORY_LABELS,
+  historyNote,
   hideStaffOnly,
   quantityTotal,
   staffTabOf,
@@ -233,5 +235,16 @@ describe("shopper view", () => {
   it("never carries purchase price or typed profit", () => {
     const rows = hideStaffOnly([{ id: "a", purchasePriceToman: 100_000, manualProfitToman: 5_000 }]);
     expect(rows).toEqual([{ id: "a", purchasePriceToman: null, manualProfitToman: null }]);
+  });
+});
+
+describe("request history", () => {
+  it("names each kind of staff work", () => {
+    expect(HISTORY_LABELS).toEqual({ confirm: "تأیید کرد", reject: "رد کرد", reopen: "ویرایش فاکتور", edit: "ویرایش کرد" });
+  });
+  it("writes the staff member's last action with the request number", () => {
+    expect(historyNote("confirm", 6)).toBe("فاکتور ۶ را تأیید کرد");
+    expect(historyNote("reopen", 12)).toBe("فاکتور ۱۲ را برای ویرایش باز کرد");
+    expect(historyNote("edit", 1005)).toBe("فاکتور ۱۰۰۵ را ویرایش کرد");
   });
 });

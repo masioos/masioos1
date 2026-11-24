@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hashPassword, verifyPassword } from "./password";
+import { hashPassword, verifyPassword } from "@/lib/password";
 import { addressSchema, loginSchema, normalizeMobile, registerSchema, safeNextPath } from "./rules";
 
 describe("normalizeMobile", () => {

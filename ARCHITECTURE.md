@@ -15,7 +15,7 @@ src/
 │   ├── cart/, requests/  shopper cart and «درخواست‌های من»
 │   ├── account/          login, register, forgot password
 │   ├── media/[file]/     product photos from UPLOAD_DIR
-│   └── admin/            admin: warehouses, catalog (products, lists, Excel import)
+│   └── admin/            admin (staff sign-in at /admin/login): requests, catalog, warehouses, staff
 ├── modules/<name>/       one business area each
 │   ├── index.ts          public surface — the only import door
 │   ├── schema.ts         its Drizzle tables
@@ -44,7 +44,8 @@ validates with zod (`rules.ts`) and calls `service.ts`.
 | `catalog`    | built    | goods per warehouse, cars, brands, categories, part groups, Excel import, shop search |
 | `pricing`    | planned  | prices: manual, uploaded PDF price list, online feed                   |
 | `customers`  | built    | shopper accounts (mobile + password) and sessions                      |
-| `requests`   | built    | cart, request, staff edit / confirm / reject, deadline, alerts         |
+| `staff`      | built    | manager and sellers: admin sign-in, permissions, sellers page          |
+| `requests`   | built    | cart, request, staff edit / confirm / reject, deadline, alerts, history |
 | `settings`   | built    | shop-wide settings (support phone)                                     |
 | `orders`     | planned  | order status: received → paid → collecting → shipped (Tipax / post)    |
 | `payments`   | planned  | gateway (+15%) or card-to-card to the warehouse card, editable per order |
@@ -60,13 +61,13 @@ validates with zod (`rules.ts`) and calls `service.ts`.
   module exports from `index.ts`.
 - All modules share one DB and one transaction scope. No events, no queues.
 - Dependency direction: `requests` → `catalog`, `customers`, `warehouses`; `catalog` → `warehouses`.
+  Every module with admin pages or staff actions → `staff` (sign-in checks); `staff` depends on none.
   `catalog` shows the add-to-cart button through a render prop the page passes in.
 - A module's `schema.ts` may import another module's `schema.ts` only to declare a foreign key
   (e.g. `catalog_products.warehouse_id → warehouses.id`). ESLint allows that one import.
 
 ## What we do not have yet
 
-- Staff sign-in (#9). Shoppers have accounts now; the admin is still open to anyone who reaches it.
 - Payment gateway, SMS, PDF price parsing, online price feeds.
 - CI and deploy pipeline. `Dockerfile` + `compose.prod.yaml` exist; deploy by hand.
 - A native mobile app (the PWA covers phones for now).

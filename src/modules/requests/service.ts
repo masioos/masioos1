@@ -7,8 +7,11 @@ import { cache } from "react";
 import { db } from "@/db/client";
 import { getCartProducts, getProductForStaff, getPurchasePrices, type CartProduct } from "@/modules/catalog";
 import { getCurrentCustomer, getCustomersByIds, saveLastAddress } from "@/modules/customers";
+import { canSee, getStaffNames, noteStaffAction, type CurrentStaff } from "@/modules/staff";
 import { listWarehouses } from "@/modules/warehouses";
 import {
+  historyNote,
+  type HistoryKind,
   hideStaffOnly,
   type StaffTab,
   canConfirm,
@@ -24,7 +27,7 @@ import {
   type CartLine,
   type Status,
 } from "./rules";
-import { requestsCartLines, requestsCarts, requestsMessages, requestsRequests, requestsRows } from "./schema";
+import { requestsCartLines, requestsCarts, requestsHistory, requestsMessages, requestsRequests, requestsRows } from "./schema";
 
 // Server-side use cases of the requests module. Only this module touches the requests_* tables.
 // Shoppers never get the warehouse or purchase price; staff pages get the warehouse name per row.
@@ -404,10 +407,11 @@ async function move(
   action: Action,
   owner: string | null,
   set: Partial<typeof requestsRequests.$inferInsert>,
-  opts: { check?: (tx: Tx) => Promise<Result>; deadlineSeen?: Date } = {},
+  opts: { check?: (tx: Tx) => Promise<Result>; deadlineSeen?: Date; by?: { staffId: string; kind: HistoryKind } } = {},
 ): Promise<Result> {
   const where = owner ? and(eq(requestsRequests.id, id), eq(requestsRequests.customerId, owner)) : eq(requestsRequests.id, id);
-  return db.transaction(async (tx) => {
+  let number = 0;
+  const res = await db.transaction(async (tx): Promise<Result> => {
     const [r] = await tx.select().from(requestsRequests).where(where).for("update");
     if (!r) return { ok: false, error: "درخواست پیدا نشد" };
     if (!canDo(action, effectiveStatus(r, new Date()))) return { ok: false, error: NOT_ALLOWED };
@@ -421,8 +425,26 @@ async function move(
       .update(requestsRequests)
       .set({ ...set, updatedAt: new Date() })
       .where(eq(requestsRequests.id, id));
+    if (opts.by) await recordHistory(tx, id, opts.by.staffId, opts.by.kind);
+    number = r.number;
     return { ok: true };
   });
+  if (res.ok && opts.by) await noteStaffAction(opts.by.staffId, historyNote(opts.by.kind, number));
+  return res;
+}
+
+/** A «تاریخچه» line. Edits by one person on one request stay one line whose time moves forward. */
+async function recordHistory(tx: Tx, requestId: string, staffId: string, kind: HistoryKind) {
+  const q = tx.insert(requestsHistory).values({ requestId, staffId, kind });
+  if (kind === "edit") {
+    await q.onConflictDoUpdate({
+      target: [requestsHistory.requestId, requestsHistory.staffId],
+      targetWhere: sql`${requestsHistory.kind} = 'edit'`,
+      set: { at: sql`now()` },
+    });
+  } else {
+    await q;
+  }
 }
 
 // Shopper actions: staff are alerted again (staffSeenAt cleared).
@@ -486,10 +508,15 @@ export async function staffTabCounts(): Promise<Record<StaffTab, { n: number; at
 export async function listRequestsForStaff(tab: StaffTab) {
   await connection();
   const list = await summaries(tabWhere(tab, new Date()), true);
-  const people = await getCustomersByIds(list.map((r) => r.customerId));
+  const [people, last] = await Promise.all([getCustomersByIds(list.map((r) => r.customerId)), lastHandlers(list.map((r) => r.id))]);
   // New or changed first, then newest.
   return list
-    .map((r) => ({ ...r, customerName: people.get(r.customerId)?.fullName ?? "", mobile: people.get(r.customerId)?.mobile ?? "" }))
+    .map((r) => ({
+      ...r,
+      customerName: people.get(r.customerId)?.fullName ?? "",
+      mobile: people.get(r.customerId)?.mobile ?? "",
+      lastHandledBy: last.get(r.id) ?? null,
+    }))
     .sort((a, b) => Number(b.needsAttention) - Number(a.needsAttention));
 }
 
@@ -516,9 +543,37 @@ export async function staffAlertCounts(): Promise<{ steps: number; messages: num
   return row ?? { steps: 0, messages: 0 };
 }
 
-export async function getRequestForStaff(id: string) {
-  const r = await loadRequest(eq(requestsRequests.id, id));
-  if (!r) return null;
+/** «آخرین رسیدگی»: the name on the newest history line of each request. */
+async function lastHandlers(requestIds: readonly string[]): Promise<Map<string, string>> {
+  if (requestIds.length === 0) return new Map();
+  const rows = await db
+    .selectDistinctOn([requestsHistory.requestId], { requestId: requestsHistory.requestId, staffId: requestsHistory.staffId })
+    .from(requestsHistory)
+    .where(inArray(requestsHistory.requestId, [...requestIds]))
+    .orderBy(requestsHistory.requestId, desc(requestsHistory.at));
+  const names = await getStaffNames(rows.map((r) => r.staffId));
+  return new Map(rows.map((r) => [r.requestId, names.get(r.staffId) ?? ""]));
+}
+
+/** «تاریخچه» under the invoice, newest first. */
+async function historyOf(requestId: string) {
+  const rows = await db
+    .select({ staffId: requestsHistory.staffId, kind: requestsHistory.kind, at: requestsHistory.at })
+    .from(requestsHistory)
+    .where(eq(requestsHistory.requestId, requestId))
+    .orderBy(desc(requestsHistory.at));
+  const names = await getStaffNames(rows.map((r) => r.staffId));
+  return rows.map((r) => ({ kind: r.kind, at: r.at, name: names.get(r.staffId) ?? "" }));
+}
+
+/**
+ * One request for staff. Purchase price and typed profit reach the page only when `viewer` may see
+ * profit (profit is worked out from the purchase price; the price itself is shown nowhere here).
+ */
+export async function getRequestForStaff(id: string, viewer: CurrentStaff) {
+  const loaded = await loadRequest(eq(requestsRequests.id, id));
+  if (!loaded) return null;
+  const r = canSee(viewer, "profit") ? loaded : { ...loaded, rows: hideStaffOnly(loaded.rows) };
   await db
     .update(requestsRequests)
     .set({ staffSeenAt: sql`coalesce(${requestsRequests.staffSeenAt}, now())`, staffUnreadMessageAt: null })
@@ -528,10 +583,11 @@ export async function getRequestForStaff(id: string) {
         or(isNull(requestsRequests.staffSeenAt), isNotNull(requestsRequests.staffUnreadMessageAt)),
       ),
     );
-  const [people, warehouses] = await Promise.all([getCustomersByIds([r.customerId]), listWarehouses()]);
+  const [people, warehouses, history] = await Promise.all([getCustomersByIds([r.customerId]), listWarehouses(), historyOf(id)]);
   const names = new Map(warehouses.map((w) => [w.id, w.name]));
   return {
     ...r,
+    history,
     customer: people.get(r.customerId) ?? null,
     warehouseNames: Object.fromEntries(r.rows.flatMap((x) => (x.warehouseId ? [[x.warehouseId, names.get(x.warehouseId) ?? ""]] : []))),
   };
@@ -544,24 +600,30 @@ async function requireStatus(requestId: string, action: Action): Promise<Result>
 }
 
 /** Runs a staff edit while the request row is locked and still editable, so a confirm cannot slip in between. */
-async function whileEditable(requestId: string, write: (tx: Tx) => Promise<void>): Promise<Result> {
-  return db.transaction(async (tx) => {
+async function whileEditable(staffId: string, requestId: string, write: (tx: Tx) => Promise<void>): Promise<Result> {
+  let number = 0;
+  const res = await db.transaction(async (tx): Promise<Result> => {
     const [r] = await tx.select().from(requestsRequests).where(eq(requestsRequests.id, requestId)).for("update");
     if (!r) return { ok: false, error: "درخواست پیدا نشد" };
     if (!canDo("staffEdit", effectiveStatus(r, new Date()))) return { ok: false, error: NOT_ALLOWED };
     await write(tx);
+    await recordHistory(tx, requestId, staffId, "edit");
+    number = r.number;
     return { ok: true };
   });
+  if (res.ok) await noteStaffAction(staffId, historyNote("edit", number));
+  return res;
 }
 
 export async function editRow(
+  staffId: string,
   rowId: string,
   v: {
     priceToman: number | null;
     quantity: number;
     isUnavailable: boolean;
     discountPercent: number;
-    manualProfitToman: number | null;
+    manualProfitToman?: number | null;
   },
 ): Promise<Result> {
   const [row] = await db
@@ -570,15 +632,15 @@ export async function editRow(
     .where(eq(requestsRows.id, rowId));
   if (!row) return { ok: false, error: "ردیف پیدا نشد" };
   // Only a row with no purchase price takes a typed profit.
-  const set = row.purchasePriceToman === null ? v : { ...v, manualProfitToman: null };
-  return whileEditable(row.requestId, async (tx) => {
+  const set = row.purchasePriceToman === null || v.manualProfitToman === undefined ? v : { ...v, manualProfitToman: null };
+  return whileEditable(staffId, row.requestId, async (tx) => {
     await tx.update(requestsRows).set(set).where(eq(requestsRows.id, rowId));
   });
 }
 
 /** The «تخفیف» box beside the total: a discount on the whole invoice, while staff may edit rows. */
-export async function setInvoiceDiscount(requestId: string, kind: DiscountKind, value: number): Promise<Result> {
-  return whileEditable(requestId, async (tx) => {
+export async function setInvoiceDiscount(staffId: string, requestId: string, kind: DiscountKind, value: number): Promise<Result> {
+  return whileEditable(staffId, requestId, async (tx) => {
     await tx
       .update(requestsRequests)
       .set({ discountKind: kind, discountValue: value })
@@ -587,6 +649,7 @@ export async function setInvoiceDiscount(requestId: string, kind: DiscountKind, 
 }
 
 export async function addRow(
+  staffId: string,
   requestId: string,
   v: { code: string; name: string; priceToman: number | null; quantity: number | null; unit: "piece" | "pair" },
 ): Promise<Result> {
@@ -596,7 +659,7 @@ export async function addRow(
     if (!product) return { ok: false, error: "کالایی با این کد فنی پیدا نشد" };
   }
   const purchasePriceToman = product ? ((await getPurchasePrices([product.id])).get(product.id) ?? null) : null;
-  return whileEditable(requestId, async (tx) => {
+  return whileEditable(staffId, requestId, async (tx) => {
     const [{ n }] = await tx.select({ n: count() }).from(requestsRows).where(eq(requestsRows.requestId, requestId));
     await tx.insert(requestsRows).values({
       requestId,
@@ -643,13 +706,14 @@ export async function sendShopperMessage(customerId: string, requestId: string, 
   return { ok: true };
 }
 
-export async function confirmRequest(requestId: string, hours: number | null, message: string): Promise<Result> {
+export async function confirmRequest(staffId: string, requestId: string, hours: number | null, message: string): Promise<Result> {
   const res = await move(requestId, "confirm", null, {
     status: "confirmed",
     deadlineAt: deadlineFrom(hours, new Date()),
     customerNotifyAt: new Date(),
   }, {
     check: async (tx) => canConfirm(await tx.select().from(requestsRows).where(eq(requestsRows.requestId, requestId))),
+    by: { staffId, kind: "confirm" },
   });
   if (res.ok && message) await db.insert(requestsMessages).values({ requestId, body: message });
   return res;
@@ -661,12 +725,24 @@ export const REOPEN_MESSAGE = "فاکتور شما در حال ویرایش اس
  * Staff «ویرایش فاکتور» after confirming (or after the shopper accepted): the request goes back to
  * awaiting, the old invoice can no longer be accepted, and staff confirm again with a new deadline.
  */
-export async function reopenRequest(requestId: string): Promise<Result> {
-  const res = await move(requestId, "reopen", null, { status: "awaiting", deadlineAt: null, customerNotifyAt: new Date() });
+export async function reopenRequest(staffId: string, requestId: string): Promise<Result> {
+  const res = await move(
+    requestId,
+    "reopen",
+    null,
+    { status: "awaiting", deadlineAt: null, customerNotifyAt: new Date() },
+    { by: { staffId, kind: "reopen" } },
+  );
   if (res.ok) await db.insert(requestsMessages).values({ requestId, body: REOPEN_MESSAGE });
   return res;
 }
 
-export async function rejectRequest(requestId: string, reason: string): Promise<Result> {
-  return move(requestId, "reject", null, { status: "rejected", rejectReason: reason, customerNotifyAt: new Date() });
+export async function rejectRequest(staffId: string, requestId: string, reason: string): Promise<Result> {
+  return move(
+    requestId,
+    "reject",
+    null,
+    { status: "rejected", rejectReason: reason, customerNotifyAt: new Date() },
+    { by: { staffId, kind: "reject" } },
+  );
 }

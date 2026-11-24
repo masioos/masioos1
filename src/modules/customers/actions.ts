@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { loginSchema, registerSchema, safeNextPath, setPasswordSchema } from "./rules";
 import { login, logout, register, setPassword } from "./service";
+import { requireStaff } from "@/modules/staff";
 
 // Server actions for shopper sign-up / sign-in and for staff. All validated on the server.
 
@@ -46,6 +47,7 @@ export async function logoutAction(): Promise<void> {
 export type SetPasswordState = { error?: string; ok?: boolean };
 
 export async function setPasswordAction(_prev: SetPasswordState, formData: FormData): Promise<SetPasswordState> {
+  await requireStaff();
   const parsed = setPasswordSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const res = await setPassword(parsed.data.customerId, parsed.data.password);

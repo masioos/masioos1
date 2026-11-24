@@ -41,6 +41,7 @@ You build it by talking to Claude Code. Start with `/next`.
 | ۱۰ | نصب بسته‌ها | `pnpm install` | در آخر می‌بینید: Done |
 | ۱۱ | راه‌اندازی پایگاه داده | `pnpm setup:local` | در آخر می‌بینید: ready |
 | ۱۲ | روشن کردن سایت | `pnpm dev` | سایت در http://localhost:3000 باز می‌شود |
+| ۱۳ | ساختن حساب مدیر (شماره خودتان) | `pnpm staff:manager 09121234567 "نام شما"` | رمز مدیر یک بار نشان داده می‌شود؛ جایی امن یادداشت کنید |
 
 ### کار هر روز
 
@@ -96,6 +97,8 @@ idea → /grill → /plan → /build → you test it → /review → /ship
 | ورود کالا از Excel | http://localhost:3000/admin/catalog/import |
 | فهرست‌ها (خودرو، برند، کشور، دسته، گروه قطعه) | http://localhost:3000/admin/catalog/lists |
 | سبد خرید | http://localhost:3000/cart |
+| ورود کارکنان (مدیر و فروشنده‌ها) | http://localhost:3000/admin/login |
+| فروشنده‌ها (فقط مدیر) | http://localhost:3000/admin/staff |
 | درخواست‌ها (مدیر) | http://localhost:3000/admin/requests |
 | مشتری‌ها و رمز تازه | http://localhost:3000/admin/customers |
 | تنظیمات (شماره پشتیبانی) | http://localhost:3000/admin/settings |
@@ -120,6 +123,11 @@ Do these in order. Each step says what you should see.
 8. Install packages: `pnpm install` → ends with "Done".
 9. Start the database and set it up: `pnpm setup:local` → ends with "✔ ready".
 10. Start the site: `pnpm dev` → open http://localhost:3000.
+11. Create the manager account (once per database): `pnpm staff:manager 09121234567 "Full Name"` →
+    prints the manager password once. Run it again with the same mobile to give the manager a new password.
+    Sign in at http://localhost:3000/admin/login.
+    On the live server also set `ADMIN_LOGIN_PATH` (e.g. `/panel-x7k2`, chosen by Alireza, kept private):
+    the staff sign-in is then only at that address and `/admin` answers 404 to everyone else.
 
 ## Every day
 
@@ -137,6 +145,7 @@ Do these in order. Each step says what you should see.
 | `pnpm db:generate`   | makes a migration after a `schema.ts` change    |
 | `pnpm db:migrate`    | applies migrations to the local database        |
 | `pnpm db:studio`     | opens a browser view of the database            |
+| `pnpm staff:manager` | creates the manager or gives a new password     |
 
 ## For developers
 

@@ -47,10 +47,13 @@ export function RowsTable({
   discountKind,
   discountValue,
   profit,
+  staffView = false,
 }: Pick<RequestDetails, "rows" | "total" | "hasUnpriced" | "subtotal" | "discount" | "discountKind" | "discountValue"> & {
   warehouseNames?: Record<string, string>;
   /** Staff only: adds the «پرافیت» column and its total. */
   profit?: { total: number; incomplete: boolean };
+  /** Staff pages: adds «جمع تعداد» under the quantity column. */
+  staffView?: boolean;
 }) {
   if (rows.length === 0) return <p className="text-muted-foreground text-sm">این درخواست ردیف کالا ندارد.</p>;
   const hasDiscount = rows.some((r) => r.discountPercent > 0);
@@ -102,7 +105,7 @@ export function RowsTable({
           hasUnpriced={hasUnpriced}
           discount={{ subtotal, amount: discount, label: discountLabel(discountKind, discountValue) }}
           profit={profit}
-          quantity={profit && { col: warehouseNames ? 3 : 2, total: quantityTotal(rows) }}
+          quantity={staffView ? { col: warehouseNames ? 3 : 2, total: quantityTotal(rows) } : undefined}
         />
       </Table>
     </div>

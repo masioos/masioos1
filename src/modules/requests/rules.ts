@@ -345,3 +345,22 @@ export function hideStaffOnly<T extends { purchasePriceToman: number | null; man
 ): T[] {
   return rows.map((x) => ({ ...x, purchasePriceToman: null, manualProfitToman: null }));
 }
+
+// ── Request history (تاریخچه) ─────────────────────────────────────────────────────────
+
+export type HistoryKind = "confirm" | "reject" | "reopen" | "edit";
+
+/** One history line under the invoice: «<time> — <name>: تأیید کرد». */
+export const HISTORY_LABELS: Record<HistoryKind, string> = {
+  confirm: "تأیید کرد",
+  reject: "رد کرد",
+  reopen: "ویرایش فاکتور",
+  edit: "ویرایش کرد",
+};
+
+/** «آخرین کار» on the sellers page, e.g. «فاکتور ۶ را تأیید کرد». */
+export function historyNote(kind: HistoryKind, requestNumber: number): string {
+  const n = requestNumber.toLocaleString("fa-IR", { useGrouping: false });
+  const verb = { confirm: "تأیید کرد", reject: "رد کرد", reopen: "برای ویرایش باز کرد", edit: "ویرایش کرد" }[kind];
+  return `فاکتور ${n} را ${verb}`;
+}
