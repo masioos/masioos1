@@ -1,6 +1,8 @@
-import { bigint, boolean, integer, pgTable, primaryKey, serial, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { bigint, boolean, index, integer, pgTable, primaryKey, serial, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { catalogProducts } from "@/modules/catalog/schema";
 import { customers } from "@/modules/customers/schema";
+import { staffUsers } from "@/modules/staff/schema";
 import { warehouses } from "@/modules/warehouses/schema";
 
 // Tables owned by the requests module: the cart, and requests staff confirm (#5).
@@ -100,6 +102,30 @@ export const requestsMessages = pgTable("requests_messages", {
   fromShopper: boolean("from_shopper").notNull().default(false),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
+
+/**
+ * «تاریخچه» under an invoice: who confirmed, rejected, reopened or edited it, and when.
+ * Edits collapse into one line per person per request (the unique index); its time moves forward.
+ */
+export const requestsHistory = pgTable(
+  "requests_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => requestsRequests.id, { onDelete: "cascade" }),
+    // Staff are never deleted (only made inactive), so no cascade here.
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staffUsers.id),
+    kind: text("kind", { enum: ["confirm", "reject", "reopen", "edit"] }).notNull(),
+    at: ts("at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("requests_history_request_idx").on(t.requestId, t.at),
+    uniqueIndex("requests_history_one_edit_idx").on(t.requestId, t.staffId).where(sql`${t.kind} = 'edit'`),
+  ],
+);
 
 export type RequestRow = typeof requestsRows.$inferSelect;
 export type RequestRecord = typeof requestsRequests.$inferSelect;

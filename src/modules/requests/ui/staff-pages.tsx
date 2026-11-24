@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { Check } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { isUuid } from "../ids";
-import { canDo, parseStaffTab, profitTotal, quantityTotal, STAFF_STATUS_NAMES, STAFF_TABS } from "../rules";
+import { canDo, HISTORY_LABELS, rowProfit, parseStaffTab, profitTotal, quantityTotal, STAFF_STATUS_NAMES, STAFF_TABS } from "../rules";
+import { canSee, requireStaff } from "@/modules/staff";
 import { getRequestForStaff, listRequestsForStaff, staffTabCounts } from "../service";
 import { ClickableRow } from "./clickable-row";
 import { fa, faDateTime, toman } from "./format";
@@ -22,6 +23,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 /** Staff list in tabs (تازه، در حال انجام، پرداخت شده، باطل شده، همه): new and changed first. */
 export async function RequestsTable({ searchParams }: { searchParams: SearchParams }) {
+  await requireStaff();
   const sp = await searchParams;
   const tab = parseStaffTab(sp.tab);
   const [list, counts] = await Promise.all([listRequestsForStaff(tab), staffTabCounts()]);
@@ -61,6 +63,7 @@ export async function RequestsTable({ searchParams }: { searchParams: SearchPara
               <TableHead>تعداد اقلام</TableHead>
               <TableHead>جمع</TableHead>
               <TableHead>زمان ثبت</TableHead>
+              <TableHead>آخرین رسیدگی</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -92,6 +95,7 @@ export async function RequestsTable({ searchParams }: { searchParams: SearchPara
                 <TableCell>{fa(r.rowCount)}</TableCell>
                 <TableCell>{toman(r.total)}</TableCell>
                 <TableCell>{faDateTime(r.createdAt)}</TableCell>
+                <TableCell>{r.lastHandledBy ?? "—"}</TableCell>
                 <TableCell>
                   <Link href={`/admin/requests/${r.id}`} className="text-primary text-sm underline">
                     باز کردن
@@ -110,10 +114,12 @@ export async function RequestsTable({ searchParams }: { searchParams: SearchPara
 export async function StaffRequest({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!isUuid(id)) notFound();
-  const r = await getRequestForStaff(id);
+  const viewer = await requireStaff();
+  const r = await getRequestForStaff(id, viewer);
   if (!r) notFound();
   const editable = canDo("staffEdit", r.status);
-  const profit = profitTotal(r.rows, r.discount);
+  // Sellers see the «پرافیت» column only when the manager allowed it for them.
+  const profit = canSee(viewer, "profit") ? profitTotal(r.rows, r.discount) : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -161,7 +167,7 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
                     <TableHead className="text-center">ناموجود</TableHead>
                     <TableHead>جمع</TableHead>
                     <TableHead />
-                    <TableHead className={profitCellClass}>پرافیت</TableHead>
+                    {profit && <TableHead className={profitCellClass}>پرافیت</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -178,8 +184,13 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
                       discountPercent={row.discountPercent}
                       isUnavailable={row.isUnavailable}
                       warehouse={row.warehouseId ? (r.warehouseNames[row.warehouseId] ?? "") : ""}
-                      purchasePrice={row.purchasePriceToman}
+                      // The raw purchase price reaches the browser only with that permission; otherwise
+                      // the row shows the profit worked out here (it updates after each save).
+                      purchasePrice={canSee(viewer, "purchasePrice") ? row.purchasePriceToman : null}
+                      hasPurchasePrice={row.purchasePriceToman !== null}
+                      savedProfit={rowProfit(row)}
                       manualProfit={row.manualProfitToman}
+                      showProfit={!!profit}
                     />
                   ))}
                 </TableBody>
@@ -200,11 +211,24 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
           </>
         ) : (
           <>
-            <RowsTable {...r} profit={profit} />
+            <RowsTable {...r} profit={profit} staffView />
             {canDo("reopen", r.status) && <ReopenForm requestId={r.id} accepted={r.status === "accepted"} />}
           </>
         )}
       </section>
+
+      {r.history.length > 0 && (
+        <section className="flex flex-col gap-1">
+          <h2 className="text-lg font-bold">تاریخچه</h2>
+          <ul className="text-muted-foreground flex flex-col gap-0.5 text-sm">
+            {r.history.map((h, i) => (
+              <li key={i}>
+                {faDateTime(h.at)} — <span className="text-foreground font-medium">{h.name}</span>: {HISTORY_LABELS[h.kind]}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <Messages messages={r.messages} viewer="staff" />
       {canDo("message", r.status) && (

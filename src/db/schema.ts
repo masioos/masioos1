@@ -5,3 +5,4 @@ export * from "@/modules/catalog/schema";
 export * from "@/modules/settings/schema";
 export * from "@/modules/customers/schema";
 export * from "@/modules/requests/schema";
+export * from "@/modules/staff/schema";

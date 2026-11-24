@@ -4,7 +4,7 @@ import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { cache } from "react";
 import { db } from "@/db/client";
-import { hashPassword, verifyPassword } from "./password";
+import { hashPassword, verifyPassword } from "@/lib/password";
 import { type RegisterInput } from "./rules";
 import { customers, customersSessions } from "./schema";
 

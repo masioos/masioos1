@@ -1,28 +1,9 @@
 import { z } from "zod";
+import { isMobile, normalizeMobile } from "@/lib/mobile";
 
 // Pure rules of the customers module: no DB, no React. Tests live next to this file.
 
-const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
-const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
-
-/**
- * An Iranian mobile as typed → "09xxxxxxxxx". Accepts Persian digits, spaces, dashes and the
- * +98 / 0098 / 98 prefixes. Returns the text unchanged-ish when it is not a mobile (the schema refuses it).
- */
-export function normalizeMobile(input: string): string {
-  const digits = input
-    .replace(/[۰-۹]/g, (d) => String(PERSIAN_DIGITS.indexOf(d)))
-    .replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d)))
-    .replace(/[\s\-()+]/g, "");
-  if (/^0098\d{10}$/.test(digits)) return `0${digits.slice(4)}`;
-  if (/^98\d{10}$/.test(digits)) return `0${digits.slice(2)}`;
-  if (/^9\d{9}$/.test(digits)) return `0${digits}`;
-  return digits;
-}
-
-export function isMobile(mobile: string): boolean {
-  return /^09\d{9}$/.test(mobile);
-}
+export { isMobile, normalizeMobile, safeNextPath } from "@/lib/mobile";
 
 const mobile = z
   .string()
@@ -62,9 +43,3 @@ export const addressSchema = z
   .string()
   .transform((s) => s.trim().replace(/\s+/g, " "))
   .pipe(z.string().min(10, "آدرس را کامل بنویسید (شهر، خیابان، پلاک)").max(500, "آدرس خیلی بلند است"));
-
-/** Only same-site paths after sign-in, so a link cannot send the shopper to another website. */
-export function safeNextPath(next: string | null | undefined): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return "/";
-  return next;
-}

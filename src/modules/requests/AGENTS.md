@@ -31,6 +31,11 @@ Rules:
   blanks it. A row with no purchase price (a free row) gets its profit typed by staff
   (`manual_profit_toman`, used only when the purchase price is unknown). Confirmation needs every remaining row priced. Deadline:
   staff hours, default 12, max 168.
+- History (#9): `requests_history` — who confirmed, rejected, reopened or edited (row edits, add row,
+  invoice discount; one `edit` line per person per request, its time moves forward). Shown as
+  «تاریخچه» under the invoice and «آخرین رسیدگی» in the list. Every staff action passes the signed-in
+  staff id (`staffStep` in `actions.ts`). Sellers without the profit switch get no purchase price or
+  typed profit (`getRequestForStaff(id, viewer)`), and their saves never change the typed profit.
 - Messages go both ways (`requests_messages.from_shopper`). Staff have one message box: «فرستادن پیام»,
   «تأیید» (sends it too) and «رد» (it is the reason). The shopper may write while awaiting,
   confirmed or accepted (`canDo("shopperMessage")`).

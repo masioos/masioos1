@@ -22,6 +22,7 @@ import {
   updateProduct,
   type ImportReport,
 } from "./service";
+import { requireManager } from "@/modules/staff";
 
 // Server actions for the catalog admin. Each validates on the server with zod (rules.ts).
 // Admin has no sign-in yet (#9): fine on a local PC, must be solved before the site goes public.
@@ -40,6 +41,7 @@ function firstError(e: z.ZodError) {
 // ── Lists ──────────────────────────────────────────────────────────────────────────────
 
 export async function saveListItemAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  await requireManager();
   const parsed = listItemSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: firstError(parsed.error) };
   const res = await saveListItem(parsed.data);
@@ -79,6 +81,7 @@ export async function createProductAction(
   prev: ProductFormState,
   formData: FormData,
 ): Promise<ProductFormState> {
+  await requireManager();
   const parsed = readProductForm(formData);
   if (!parsed.success) return productError(prev, formData, firstError(parsed.error));
   const res = await createProduct(parsed.data);
@@ -92,6 +95,7 @@ export async function updateProductAction(
   prev: ProductFormState,
   formData: FormData,
 ): Promise<ProductFormState> {
+  await requireManager();
   const id = z.uuid().safeParse(formData.get("id"));
   if (!id.success) return { error: "کالا پیدا نشد" };
   const parsed = readProductForm(formData);
@@ -103,6 +107,7 @@ export async function updateProductAction(
 }
 
 export async function setProductFlagAction(formData: FormData): Promise<void> {
+  await requireManager();
   const parsed = productFlagsSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return;
   await setProductFlag(parsed.data.id, parsed.data.flag, parsed.data.value);
@@ -112,6 +117,7 @@ export async function setProductFlagAction(formData: FormData): Promise<void> {
 // ── Photos ─────────────────────────────────────────────────────────────────────────────
 
 export async function addPhotoAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  await requireManager();
   const productId = z.uuid().safeParse(formData.get("productId"));
   const file = formData.get("photo");
   if (!productId.success || !(file instanceof File)) return { error: "فایلی انتخاب نشده است" };
@@ -122,6 +128,7 @@ export async function addPhotoAction(_prev: FormState, formData: FormData): Prom
 }
 
 export async function removePhotoAction(formData: FormData): Promise<void> {
+  await requireManager();
   const id = z.uuid().safeParse(formData.get("photoId"));
   if (!id.success) return;
   await removePhoto(id.data);
@@ -138,6 +145,7 @@ export type ImportState = {
 const MAX_SHEET_BYTES = 5 * 1024 * 1024;
 
 export async function importStockSheetAction(_prev: ImportState, formData: FormData): Promise<ImportState> {
+  await requireManager();
   const warehouseId = z.uuid().safeParse(formData.get("warehouseId"));
   if (!warehouseId.success || !(await warehouseExists(warehouseId.data))) {
     return { error: "انبار را انتخاب کنید" };

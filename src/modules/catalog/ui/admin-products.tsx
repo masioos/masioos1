@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { canSee, requireStaff } from "@/modules/staff";
 import { formatToman, isUuid } from "../rules";
 import {
   getProductForEdit,
@@ -33,6 +34,10 @@ const price = (n: number | null) => (n === null ? "—" : formatToman(n));
 
 /** Admin product list: search, warehouse filter, purchase + shop price, quick switches. */
 export async function ProductAdminTable({ searchParams }: { searchParams: SearchParams }) {
+  const viewer = await requireStaff();
+  // Sellers: no edit links or switches; purchase price only when the manager allowed it.
+  const manager = viewer.role === "manager";
+  const showPurchase = canSee(viewer, "purchasePrice");
   const sp = await searchParams;
   const q = one(sp.q);
   const warehouseId = isUuid(one(sp.warehouse)) ? one(sp.warehouse) : "";
@@ -69,7 +74,7 @@ export async function ProductAdminTable({ searchParams }: { searchParams: Search
               <TableHead>نام</TableHead>
               <TableHead>برند</TableHead>
               <TableHead>انبار</TableHead>
-              <TableHead>قیمت خرید</TableHead>
+              {showPurchase && <TableHead>قیمت خرید</TableHead>}
               <TableHead>قیمت سایت</TableHead>
               <TableHead>وضعیت</TableHead>
               <TableHead>موجودی</TableHead>
@@ -82,19 +87,29 @@ export async function ProductAdminTable({ searchParams }: { searchParams: Search
                   {p.code}
                 </TableCell>
                 <TableCell className="max-w-72 whitespace-normal">
-                  <Link className="text-primary underline" href={`/admin/catalog/${p.id}`}>
-                    {p.name}
-                  </Link>
+                  {manager ? (
+                    <Link className="text-primary underline" href={`/admin/catalog/${p.id}`}>
+                      {p.name}
+                    </Link>
+                  ) : (
+                    p.name
+                  )}
                 </TableCell>
                 <TableCell>{p.brandName ?? "—"}</TableCell>
                 <TableCell>{p.warehouseName}</TableCell>
-                <TableCell>{price(p.purchasePriceToman)}</TableCell>
+                {showPurchase && <TableCell>{price(p.purchasePriceToman)}</TableCell>}
                 <TableCell>{price(p.shopPriceToman)}</TableCell>
                 <TableCell>
-                  <FlagButton id={p.id} flag="isActive" value={p.isActive} />
+                  {manager ? <FlagButton id={p.id} flag="isActive" value={p.isActive} /> : p.isActive ? "فعال" : "غیرفعال"}
                 </TableCell>
                 <TableCell>
-                  <FlagButton id={p.id} flag="isUnavailable" value={p.isUnavailable} />
+                  {manager ? (
+                    <FlagButton id={p.id} flag="isUnavailable" value={p.isUnavailable} />
+                  ) : p.isUnavailable ? (
+                    "ناموجود"
+                  ) : (
+                    "موجود"
+                  )}
                 </TableCell>
               </TableRow>
             ))}
