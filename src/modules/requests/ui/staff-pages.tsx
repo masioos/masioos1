@@ -3,34 +3,55 @@ import { notFound } from "next/navigation";
 import { Check } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { isUuid } from "../ids";
-import { canDo, STAFF_STATUS_NAMES } from "../rules";
-import { getRequestForStaff, listRequestsForStaff, type StaffFilter } from "../service";
+import { canDo, parseStaffTab, profitTotal, quantityTotal, STAFF_STATUS_NAMES, STAFF_TABS } from "../rules";
+import { getRequestForStaff, listRequestsForStaff, staffTabCounts } from "../service";
 import { ClickableRow } from "./clickable-row";
 import { fa, faDateTime, toman } from "./format";
-import { discountLabel, goodsBoxClass, Messages, RowsTable, StatusBadge, TotalFooter } from "./request-view";
+import {
+  discountLabel,
+  goodsBoxClass,
+  Messages,
+  profitCellClass,
+  RowsTable,
+  StatusBadge,
+  TotalFooter,
+} from "./request-view";
 import { AddRowForm, InvoiceDiscountForm, ReopenForm, RowEditForm, StaffActions } from "./staff-forms";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-/** Staff list: new and changed first. */
+/** Staff list in tabs (تازه، در حال انجام، پرداخت شده، باطل شده، همه): new and changed first. */
 export async function RequestsTable({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
-  const filter: StaffFilter = sp.all ? "all" : "open";
-  const list = await listRequestsForStaff(filter);
+  const tab = parseStaffTab(sp.tab);
+  const [list, counts] = await Promise.all([listRequestsForStaff(tab), staffTabCounts()]);
   return (
     <div className="flex flex-col gap-4">
-      <nav className="flex gap-4 text-sm">
-        <Link href="/admin/requests" className={filter === "open" ? "font-bold" : "text-primary underline"}>
-          باز و تازه
-        </Link>
-        <Link href="/admin/requests?all=1" className={filter === "all" ? "font-bold" : "text-primary underline"}>
-          همه
-        </Link>
+      <nav className="flex flex-wrap gap-2 border-b pb-2 text-sm">
+        {STAFF_TABS.map((t) => (
+          <Link
+            key={t.tab}
+            href={t.tab === "new" ? "/admin/requests" : `/admin/requests?tab=${t.tab}`}
+            aria-current={t.tab === tab ? "page" : undefined}
+            className={
+              t.tab === tab
+                ? "bg-primary text-primary-foreground rounded-md px-3 py-1.5 font-bold"
+                : "hover:bg-muted rounded-md px-3 py-1.5"
+            }
+          >
+            {t.name} ({fa(counts[t.tab].n)})
+            {t.tab !== "all" && counts[t.tab].attention > 0 && (
+              <span className="ms-1.5 rounded-full bg-amber-500 px-1.5 text-xs text-white" title="پیام یا تغییر تازه از مشتری">
+                {fa(counts[t.tab].attention)}
+              </span>
+            )}
+          </Link>
+        ))}
       </nav>
       {list.length === 0 ? (
         <p>درخواستی نیست.</p>
       ) : (
-        <Table>
+        <Table className="[&_tbody_tr]:border-b-2 [&_tbody_tr]:border-zinc-300">
           <TableHeader>
             <TableRow>
               <TableHead>شماره</TableHead>
@@ -92,6 +113,7 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
   const r = await getRequestForStaff(id);
   if (!r) notFound();
   const editable = canDo("staffEdit", r.status);
+  const profit = profitTotal(r.rows, r.discount);
 
   return (
     <div className="flex flex-col gap-6">
@@ -139,6 +161,7 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
                     <TableHead className="text-center">ناموجود</TableHead>
                     <TableHead>جمع</TableHead>
                     <TableHead />
+                    <TableHead className={profitCellClass}>پرافیت</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -155,6 +178,8 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
                       discountPercent={row.discountPercent}
                       isUnavailable={row.isUnavailable}
                       warehouse={row.warehouseId ? (r.warehouseNames[row.warehouseId] ?? "") : ""}
+                      purchasePrice={row.purchasePriceToman}
+                      manualProfit={row.manualProfitToman}
                     />
                   ))}
                 </TableBody>
@@ -164,6 +189,8 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
                   hasUnpriced={r.hasUnpriced}
                   trailing={1}
                   discount={{ subtotal: r.subtotal, amount: r.discount, label: discountLabel(r.discountKind, r.discountValue) }}
+                  profit={profit}
+                  quantity={{ col: 3, total: quantityTotal(r.rows) }}
                   control={<InvoiceDiscountForm requestId={r.id} kind={r.discountKind} value={r.discountValue} />}
                 />
               </Table>
@@ -173,7 +200,7 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
           </>
         ) : (
           <>
-            <RowsTable {...r} />
+            <RowsTable {...r} profit={profit} />
             {canDo("reopen", r.status) && <ReopenForm requestId={r.id} accepted={r.status === "accepted"} />}
           </>
         )}

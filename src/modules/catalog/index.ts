@@ -10,6 +10,6 @@ export { EditProduct, NewProduct, ProductAdminTable } from "./ui/admin-products"
 export { CatalogLists } from "./ui/lists-page";
 export { StockSheetImport } from "./ui/import-page";
 // Media route (/media/<file>), cart and requests (#5)
-export { getCartProducts, getProductForStaff, readPhoto, type CartProduct } from "./service";
+export { getCartProducts, getProductForStaff, getPurchasePrices, readPhoto, type CartProduct } from "./service";
 export { canAddToCart, formatToman, maxQuantity, UNIT_NAMES, unitPriceLabel, type Unit } from "./rules";
 export type { Product } from "./schema";

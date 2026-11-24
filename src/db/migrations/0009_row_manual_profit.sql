@@ -1,0 +1,1 @@
+ALTER TABLE "requests_rows" ADD COLUMN "manual_profit_toman" bigint;

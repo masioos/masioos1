@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  hideStaffOnly,
+  quantityTotal,
+  staffTabOf,
+  parseStaffTab,
   addRowSchema,
   canConfirm,
   canDo,
@@ -11,6 +15,8 @@ import {
   effectiveStatus,
   requestTotal,
   rowTotal,
+  rowProfit,
+  profitTotal,
   invoiceTotals,
   invoiceDiscountSchema,
   rowEditSchema,
@@ -98,7 +104,8 @@ describe("request", () => {
   it("row edit reads Persian numbers; quantity is required", () => {
     const id = "6f1c1f3e-8a1b-4c2d-9e3f-0a1b2c3d4e5f";
     const r = rowEditSchema.parse({ rowId: id, priceToman: "۲٬۵۸۷٬۰۰۰", quantity: "۲", isUnavailable: "on" });
-    expect(r).toEqual({ rowId: id, priceToman: 2_587_000, quantity: 2, isUnavailable: true, discountPercent: 0 });
+    expect(r).toEqual({ rowId: id, priceToman: 2_587_000, quantity: 2, isUnavailable: true, discountPercent: 0, manualProfitToman: null });
+    expect(rowEditSchema.parse({ rowId: id, priceToman: "1000", quantity: "1", manualProfitToman: "12/000" }).manualProfitToman).toBe(12_000);
     expect(rowEditSchema.parse({ rowId: id, priceToman: "1000", quantity: "1", discountPercent: "۵" }).discountPercent).toBe(5);
     expect(rowEditSchema.safeParse({ rowId: id, priceToman: "1000", quantity: "1", discountPercent: "120" }).success).toBe(false);
     // A price of 0 is a typo, not a free item (a free item is a 100% row discount).
@@ -157,5 +164,69 @@ describe("invoice discount", () => {
     expect(invoiceDiscountSchema.safeParse({ requestId: id, enabled: "on", kind: "percent", value: "150" }).success).toBe(
       false,
     );
+  });
+});
+
+describe("profit (staff only)", () => {
+  it("is the row amount after its discount less purchase × quantity", () => {
+    expect(rowProfit({ priceToman: 115_000, purchasePriceToman: 100_000, quantity: 2, isUnavailable: false })).toBe(30_000);
+    expect(
+      rowProfit({ priceToman: 115_000, purchasePriceToman: 100_000, quantity: 2, isUnavailable: false, discountPercent: 10 }),
+    ).toBe(7_000);
+    expect(rowProfit({ priceToman: 115_000, purchasePriceToman: null, quantity: 1, isUnavailable: false })).toBeNull();
+    expect(rowProfit({ priceToman: 115_000, purchasePriceToman: 100_000, quantity: 1, isUnavailable: true })).toBeNull();
+    // A free row (no purchase price) uses the profit staff typed.
+    expect(rowProfit({ priceToman: 90_000, purchasePriceToman: null, manualProfitToman: 12_000, quantity: 3, isUnavailable: false })).toBe(
+      12_000,
+    );
+    // A typed profit never overrides a known purchase price.
+    expect(rowProfit({ priceToman: 115_000, purchasePriceToman: 100_000, manualProfitToman: 1, quantity: 1, isUnavailable: false })).toBe(
+      15_000,
+    );
+  });
+  it("totals rows, takes off the invoice discount, and flags unknown rows", () => {
+    const rows = [
+      { priceToman: 115_000, purchasePriceToman: 100_000, quantity: 2, isUnavailable: false },
+      { priceToman: 50_000, purchasePriceToman: null, quantity: 1, isUnavailable: false },
+      { priceToman: 90_000, purchasePriceToman: 10_000, quantity: 1, isUnavailable: true },
+    ];
+    expect(profitTotal(rows, 5_000)).toEqual({ total: 25_000, incomplete: true });
+  });
+});
+
+describe("quantity total", () => {
+  it("adds the units of available rows only", () => {
+    expect(
+      quantityTotal([
+        { quantity: 2, isUnavailable: false },
+        { quantity: 5, isUnavailable: true },
+        { quantity: 3, isUnavailable: false },
+      ]),
+    ).toBe(5);
+  });
+});
+
+describe("staff list tabs", () => {
+  const seen = new Date();
+  it("puts each status in its tab", () => {
+    expect(staffTabOf({ status: "awaiting", staffSeenAt: null })).toBe("new");
+    expect(staffTabOf({ status: "awaiting", staffSeenAt: seen })).toBe("working");
+    expect(staffTabOf({ status: "confirmed", staffSeenAt: null })).toBe("working");
+    expect(staffTabOf({ status: "accepted", staffSeenAt: null })).toBe("paid");
+    for (const status of ["rejected", "cancelled", "declined", "expired"] as const) {
+      expect(staffTabOf({ status, staffSeenAt: seen })).toBe("void");
+    }
+  });
+  it("falls back to «تازه» for an unknown tab", () => {
+    expect(parseStaffTab("paid")).toBe("paid");
+    expect(parseStaffTab("x")).toBe("new");
+    expect(parseStaffTab(undefined)).toBe("new");
+  });
+});
+
+describe("shopper view", () => {
+  it("never carries purchase price or typed profit", () => {
+    const rows = hideStaffOnly([{ id: "a", purchasePriceToman: 100_000, manualProfitToman: 5_000 }]);
+    expect(rows).toEqual([{ id: "a", purchasePriceToman: null, manualProfitToman: null }]);
   });
 });
