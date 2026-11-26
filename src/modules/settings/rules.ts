@@ -27,3 +27,15 @@ export function formatPhone(phone: string): string {
   if (/^0\d{10}$/.test(phone)) return `${phone.slice(0, 3)}-${phone.slice(3, 7)}-${phone.slice(7)}`;
   return phone;
 }
+
+/** Tax and VAT added when paying by gateway (#19), whole percent. Card-to-card pays the plain total. */
+export const DEFAULT_GATEWAY_TAX_PERCENT = 10;
+
+export const gatewayTaxSchema = z.object({
+  gatewayTaxPercent: z
+    .string()
+    .transform((s) => s.replace(/[۰-۹]/g, (d) => String(PERSIAN_DIGITS.indexOf(d))).replace(/[%٪\s]/g, ""))
+    .pipe(z.string().regex(/^\d{1,3}$/, "درصد باید یک عدد بین ۰ و ۱۰۰ باشد"))
+    .transform(Number)
+    .pipe(z.number().max(100, "درصد باید یک عدد بین ۰ و ۱۰۰ باشد")),
+});

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { formatToman, unitPriceLabel, type Unit } from "../rules";
+import type { ProductAction } from "./shop";
 import type { ShopProduct } from "../service";
 import { Photo } from "./photo";
 
@@ -22,13 +23,14 @@ export function UnavailableBadge() {
   );
 }
 
-/** One product in a list: what a shopper may see. Never the purchase price, warehouse or stock. */
-export function ProductCard({ product }: { product: ShopProduct }) {
+/**
+ * One product in a list: what a shopper may see. Never the purchase price, warehouse or stock.
+ * `action` (the cart's quick add) shows on hover; on phones (no hover) it is always shown.
+ */
+export function ProductCard({ product, action }: { product: ShopProduct; action?: ProductAction }) {
   return (
-    <Link
-      href={`/p/${encodeURIComponent(product.code)}`}
-      className="hover:border-primary flex flex-col gap-2 rounded-xl border p-3 transition-colors"
-    >
+    <div className="group hover:border-primary relative flex flex-col rounded-xl border transition-colors">
+    <Link href={`/p/${encodeURIComponent(product.code)}`} className="flex flex-1 flex-col gap-2 p-3">
       <div className="bg-muted/40 flex aspect-square items-center justify-center overflow-hidden rounded-lg">
         {product.photo ? (
           <Photo fileName={product.photo} alt={product.name} size={240} className="size-full object-contain" />
@@ -45,14 +47,20 @@ export function ProductCard({ product }: { product: ShopProduct }) {
         {product.isUnavailable && <UnavailableBadge />}
       </div>
     </Link>
+      {action && !product.isUnavailable && (
+        <div className="bg-background/95 border-t p-2 transition-opacity md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100">
+          {action({ id: product.id, unit: product.unit, isUnavailable: product.isUnavailable })}
+        </div>
+      )}
+    </div>
   );
 }
 
-export function ProductGrid({ products }: { products: ShopProduct[] }) {
+export function ProductGrid({ products, action }: { products: ShopProduct[]; action?: ProductAction }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {products.map((p) => (
-        <ProductCard key={p.id} product={p} />
+        <ProductCard key={p.id} product={p} action={action} />
       ))}
     </div>
   );

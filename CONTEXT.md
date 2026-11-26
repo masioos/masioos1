@@ -24,16 +24,22 @@ One word, one meaning. Use these words in code, issues and chat. Persian in brac
 | **Support phone** (شماره پشتیبانی) | Set in admin settings; shoppers call or message it, e.g. to reset a password. |
 | **Request** (درخواست) | A submitted cart. Staff may edit rows, then confirm (with a deadline) or reject. The shopper accepts or declines. «ویرایش فاکتور» sends a confirmed or accepted request back to awaiting; staff confirm again and the shopper accepts again. Staff may give each row a discount percent (default 0), and the whole invoice a discount (percent or amount). Staff see each row's profit («پرافیت»), from the purchase price on the day of the request. Statuses: awaiting, confirmed, accepted, cancelled, rejected, declined, expired. The shopper sees awaiting as «در انتظار تأیید فروشگاه». |
 | **Confirmation** (تایید) | Staff (and for a bazaar warehouse, its owner) agree to stock and price. Opens payment. Each product names its warehouse, so staff know whom to ask. |
-| **Order** (سفارش) | A confirmed request. Has a status. |
-| **Order status** (وضعیت سفارش) | received → awaiting payment → payment confirmed → being collected → shipped (Tipax / post / other courier). |
+| **Order** (سفارش) | A request the shopper accepted. Has an order status. |
+| **Order status** (وضعیت سفارش) | awaiting payment (منتظر پرداخت) → payment sent (پرداخت فرستاده شد) → paid (پرداخت تأیید شد) → collecting (در حال جمع‌آوری) → shipped (ارسال شد); refunded (لغو و برگشت پول) after payment. Unpaid past the deadline → expired. |
+| **Payment form** (فرم پرداخت) | What the shopper sends after card-to-card: tracking number, last 4 card digits, date (last 7 days, Persian) and time, optional receipt photo (saved as soon as it is picked). With «بیشتر از یک کارت» one form per card, each with its amount. Staff confirm or answer «پرداخت پیدا نشد» per form; paid when confirmed forms cover the total. |
+| **Pay with** (پرداخت با) | The shopper first picks «درگاه پرداخت» (total + the tax and VAT percent set in settings; «به‌زودی» until #20) or «انتقال به کارت» (no tax). |
+| **Extra order** (سفارش اضافه) | What staff call the shopper's cart note (green box on the request page). |
+| **Delivery method** (روش ارسال) | Chosen by the shopper once, before «پرداخت با»: Tipax, post, courier in our city, pickup at the shop. Tipax and post get a tracking code when shipped. |
+| **Refund** (برگشت پول) | Money staff send back to the shopper, one record per transfer with an optional receipt photo the shopper sees. Never more than the confirmed payments. |
+| **Pay on delivery** (پس‌کرایه) | Shipping is paid to the courier on delivery; never on the invoice. |
 | **Gateway payment** (درگاه پرداخت) | Online payment. Adds about 15% on top of the total (to confirm with the customer). |
 | **Card-to-card** (کارت به کارت) | The shopper pays the exact total to a bank card. By default the card of the goods' warehouse; staff can change it per order. |
-| **Payee card** (کارت مقصد) | The card one order is paid to. Recorded for accounting. |
+| **Payee card** (کارت مقصد) | The card one order is paid to. Default: the warehouse with the largest share of the invoice; staff may change it before the payment form arrives. Recorded for accounting. |
 | **Accounting** (حسابداری) | Our own accounting software, inside this app as a module. Every paid order becomes an invoice there. |
 | **Invoice** (فاکتور) | The accounting record of a sale: who bought what, for how much, paid to which warehouse's card. |
 | **Staff** (اپراتور) | The people who sign in to the admin with mobile and password: one **manager** (مدیر) and several **sellers** (فروشنده). |
 | **Manager** (مدیر) | Alireza. Manages staff, settings, warehouses and products; always sees purchase price and profit. |
-| **Seller** (فروشنده) | Staff who work on requests. Sees purchase price and profit only if the manager allows each one for that seller. Never deleted, only made inactive. |
+| **Seller** (فروشنده) | Staff who work on requests. Sees purchase price and profit only if the manager allows each one for that seller. The manager can edit a seller's name and mobile, make them inactive, or delete them (gone from the list; their name stays in request history). |
 | **Request history** (تاریخچه) | Under each invoice: which staff member confirmed, rejected, reopened or edited it, and when. «آخرین رسیدگی» is the newest one. |
 | **Shopper** (مشتری) | A person buying in the shop. |
 

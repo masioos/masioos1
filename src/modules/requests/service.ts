@@ -1,15 +1,30 @@
 import "server-only";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { and, asc, count, desc, eq, gt, inArray, lte, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { cache } from "react";
 import { db } from "@/db/client";
+import { env } from "@/env";
+import { detectImageType, isSafePhotoName, PHOTO_CONTENT_TYPES } from "@/lib/image";
+import { groupFa } from "@/lib/money";
 import { getCartProducts, getProductForStaff, getPurchasePrices, type CartProduct } from "@/modules/catalog";
 import { getCurrentCustomer, getCustomersByIds, saveLastAddress } from "@/modules/customers";
-import { canSee, getStaffNames, noteStaffAction, type CurrentStaff } from "@/modules/staff";
+import { canSee, getCurrentStaff, getStaffNames, noteStaffAction, type CurrentStaff } from "@/modules/staff";
 import { listWarehouses } from "@/modules/warehouses";
 import {
+  beforePayment,
+  canCancelOrder,
+  canShip,
+  defaultPayee,
+  paidAtFrom,
+  paymentProgress,
+  refundable,
+  statusAfterPayments,
+  MAX_RECEIPT_BYTES,
+  type DeliveryMethod,
   historyNote,
   type HistoryKind,
   hideStaffOnly,
@@ -27,7 +42,16 @@ import {
   type CartLine,
   type Status,
 } from "./rules";
-import { requestsCartLines, requestsCarts, requestsHistory, requestsMessages, requestsRequests, requestsRows } from "./schema";
+import {
+  requestsCartLines,
+  requestsCarts,
+  requestsHistory,
+  requestsMessages,
+  requestsPayments,
+  requestsRefunds,
+  requestsRequests,
+  requestsRows,
+} from "./schema";
 
 // Server-side use cases of the requests module. Only this module touches the requests_* tables.
 // Shoppers never get the warehouse or purchase price; staff pages get the warehouse name per row.
@@ -344,13 +368,28 @@ export type RequestDetails = {
   discountValue: number;
   total: number;
   hasUnpriced: boolean;
+  // Payment and order (#19)
+  payeeCard: string | null;
+  payeeName: string | null;
+  paymentFormAt: Date | null;
+  deliveryMethod: DeliveryMethod | null;
+  shippingCode: string;
+  refundReason: string;
+  refundTracking: string;
+  /** Payment forms, newest first. */
+  payments: PaymentView[];
+  /** Money sent back to the shopper, oldest first. */
+  refunds: RefundView[];
 };
+
+export type PaymentView = Omit<typeof requestsPayments.$inferSelect, "requestId">;
+export type RefundView = Omit<typeof requestsRefunds.$inferSelect, "requestId">;
 
 async function loadRequest(where: SQL): Promise<RequestDetails | null> {
   await connection(); // reads the clock: request time only
   const [r] = await db.select().from(requestsRequests).where(where);
   if (!r) return null;
-  const [rows, messages] = await Promise.all([
+  const [rows, messages, payments, refunds] = await Promise.all([
     db.select().from(requestsRows).where(eq(requestsRows.requestId, r.id)).orderBy(asc(requestsRows.position)),
     db
       .select({
@@ -362,6 +401,8 @@ async function loadRequest(where: SQL): Promise<RequestDetails | null> {
       .from(requestsMessages)
       .where(eq(requestsMessages.requestId, r.id))
       .orderBy(asc(requestsMessages.createdAt)),
+    db.select().from(requestsPayments).where(eq(requestsPayments.requestId, r.id)).orderBy(desc(requestsPayments.createdAt)),
+    db.select().from(requestsRefunds).where(eq(requestsRefunds.requestId, r.id)).orderBy(asc(requestsRefunds.createdAt)),
   ]);
   return {
     id: r.id,
@@ -378,6 +419,15 @@ async function loadRequest(where: SQL): Promise<RequestDetails | null> {
     discountKind: r.discountKind,
     discountValue: r.discountValue,
     ...invoiceTotals(rows, { kind: r.discountKind, value: r.discountValue }),
+    payeeCard: r.payeeCard,
+    payeeName: r.payeeName,
+    paymentFormAt: r.paymentFormAt,
+    deliveryMethod: r.deliveryMethod,
+    shippingCode: r.shippingCode,
+    refundReason: r.refundReason,
+    refundTracking: r.refundTracking,
+    payments: payments.map((p) => ({ ...p, requestId: undefined })),
+    refunds: refunds.map((x) => ({ ...x, requestId: undefined })),
   };
 }
 
@@ -387,7 +437,13 @@ export async function getMyRequest(customerId: string, id: string) {
   if (!r) return r;
   await db.update(requestsRequests).set({ customerSeenAt: new Date() }).where(eq(requestsRequests.id, id));
   // Purchase prices are staff-only: they never reach a shopper's page.
-  return { ...r, rows: hideStaffOnly(r.rows) };
+  return {
+    ...r,
+    rows: hideStaffOnly(r.rows),
+    payments: r.payments.map((p) => ({ ...p, receiptFile: p.receiptFile ? "sent" : null, decidedBy: null })),
+    // Refund receipts are for the shopper to see (served by readRefundReceipt); who sent them is not.
+    refunds: r.refunds.map((x) => ({ ...x, createdBy: "" })),
+  };
 }
 
 // ── Status changes ─────────────────────────────────────────────────────────────────────
@@ -407,7 +463,13 @@ async function move(
   action: Action,
   owner: string | null,
   set: Partial<typeof requestsRequests.$inferInsert>,
-  opts: { check?: (tx: Tx) => Promise<Result>; deadlineSeen?: Date; by?: { staffId: string; kind: HistoryKind } } = {},
+  opts: {
+    check?: (tx: Tx, r: typeof requestsRequests.$inferSelect) => Promise<Result>;
+    /** More writes in the same transaction, after the status change. */
+    also?: (tx: Tx, r: typeof requestsRequests.$inferSelect) => Promise<void>;
+    deadlineSeen?: Date;
+    by?: { staffId: string; kind: HistoryKind };
+  } = {},
 ): Promise<Result> {
   const where = owner ? and(eq(requestsRequests.id, id), eq(requestsRequests.customerId, owner)) : eq(requestsRequests.id, id);
   let number = 0;
@@ -418,13 +480,14 @@ async function move(
     // The shopper answers the invoice they saw: a re-confirmed invoice has a new deadline.
     if (opts.deadlineSeen && r.deadlineAt?.getTime() !== opts.deadlineSeen.getTime()) return { ok: false, error: CHANGED };
     if (opts.check) {
-      const checked = await opts.check(tx);
+      const checked = await opts.check(tx, r);
       if (!checked.ok) return checked;
     }
     await tx
       .update(requestsRequests)
       .set({ ...set, updatedAt: new Date() })
       .where(eq(requestsRequests.id, id));
+    if (opts.also) await opts.also(tx, r);
     if (opts.by) await recordHistory(tx, id, opts.by.staffId, opts.by.kind);
     number = r.number;
     return { ok: true };
@@ -464,19 +527,25 @@ export const declineRequest = (customerId: string, id: string, deadlineSeen: Dat
 function tabWhere(tab: StaffTab, now: Date): SQL | undefined {
   const s = requestsRequests.status;
   const deadline = requestsRequests.deadlineAt;
-  const expired = and(eq(s, "confirmed"), isNotNull(deadline), lte(deadline, now));
+  const formAt = requestsRequests.paymentFormAt;
+  const late = and(isNotNull(deadline), lte(deadline, now));
+  // Same as rules.effectiveStatus: unanswered confirmed, or accepted with no payment form, past the deadline.
+  const expired = or(and(eq(s, "confirmed"), late), and(eq(s, "accepted"), isNull(formAt), late));
+  const onTime = or(isNull(deadline), gt(deadline, now));
   switch (tab) {
     case "new":
       return and(eq(s, "awaiting"), isNull(requestsRequests.staffSeenAt));
     case "working":
       return or(
         and(eq(s, "awaiting"), isNotNull(requestsRequests.staffSeenAt)),
-        and(eq(s, "confirmed"), or(isNull(deadline), gt(deadline, now))),
+        and(eq(s, "confirmed"), onTime),
+        and(eq(s, "accepted"), or(isNotNull(formAt), onTime)),
+        eq(s, "payment_sent"),
       );
     case "paid":
-      return eq(s, "accepted");
+      return inArray(s, ["paid", "collecting", "shipped"]);
     case "void":
-      return or(inArray(s, ["rejected", "cancelled", "declined"]), expired);
+      return or(inArray(s, ["rejected", "cancelled", "declined", "refunded"]), expired);
     case "all":
       return undefined;
   }
@@ -583,11 +652,20 @@ export async function getRequestForStaff(id: string, viewer: CurrentStaff) {
         or(isNull(requestsRequests.staffSeenAt), isNotNull(requestsRequests.staffUnreadMessageAt)),
       ),
     );
-  const [people, warehouses, history] = await Promise.all([getCustomersByIds([r.customerId]), listWarehouses(), historyOf(id)]);
+  const [people, warehouses, history, deciders] = await Promise.all([
+    getCustomersByIds([r.customerId]),
+    listWarehouses(),
+    historyOf(id),
+    getStaffNames([...r.payments.flatMap((p) => (p.decidedBy ? [p.decidedBy] : [])), ...r.refunds.map((x) => x.createdBy)]),
+  ]);
   const names = new Map(warehouses.map((w) => [w.id, w.name]));
   return {
     ...r,
     history,
+    payments: r.payments.map((p) => ({ ...p, decidedByName: p.decidedBy ? (deciders.get(p.decidedBy) ?? "") : "" })),
+    refunds: r.refunds.map((x) => ({ ...x, createdByName: deciders.get(x.createdBy) ?? "" })),
+    // Payee choices: every warehouse card.
+    warehouseCards: warehouses.map((w) => ({ id: w.id, name: w.name, cardNumber: w.cardNumber, cardHolder: w.cardHolder })),
     customer: people.get(r.customerId) ?? null,
     warehouseNames: Object.fromEntries(r.rows.flatMap((x) => (x.warehouseId ? [[x.warehouseId, names.get(x.warehouseId) ?? ""]] : []))),
   };
@@ -716,7 +794,31 @@ export async function confirmRequest(staffId: string, requestId: string, hours: 
     by: { staffId, kind: "confirm" },
   });
   if (res.ok && message) await db.insert(requestsMessages).values({ requestId, body: message });
+  if (res.ok) await suggestPayee(requestId);
   return res;
+}
+
+/**
+ * The suggested payee card (largest warehouse share), worked out again at every confirm (the invoice
+ * may have changed after «ویرایش فاکتور»), unless staff chose a card by hand for this request.
+ */
+async function suggestPayee(requestId: string) {
+  const [chosen] = await db
+    .select({ id: requestsHistory.id })
+    .from(requestsHistory)
+    .where(and(eq(requestsHistory.requestId, requestId), eq(requestsHistory.kind, "payee_card")))
+    .limit(1);
+  if (chosen) return;
+  const [rows, warehouses] = await Promise.all([
+    db.select().from(requestsRows).where(eq(requestsRows.requestId, requestId)),
+    listWarehouses(),
+  ]);
+  const card = defaultPayee(rows, warehouses);
+  if (!card) return;
+  await db
+    .update(requestsRequests)
+    .set({ payeeCard: card.cardNumber, payeeName: card.cardHolder })
+    .where(and(eq(requestsRequests.id, requestId), isNull(requestsRequests.paymentFormAt)));
 }
 
 export const REOPEN_MESSAGE = "فاکتور شما در حال ویرایش است. بعد از تأیید دوباره خبرتان می‌کنیم.";
@@ -731,7 +833,7 @@ export async function reopenRequest(staffId: string, requestId: string): Promise
     "reopen",
     null,
     { status: "awaiting", deadlineAt: null, customerNotifyAt: new Date() },
-    { by: { staffId, kind: "reopen" } },
+    { check: async (_tx, r) => (beforePayment(r) ? { ok: true } : { ok: false, error: AFTER_PAYMENT }), by: { staffId, kind: "reopen" } },
   );
   if (res.ok) await db.insert(requestsMessages).values({ requestId, body: REOPEN_MESSAGE });
   return res;
@@ -745,4 +847,330 @@ export async function rejectRequest(staffId: string, requestId: string, reason: 
     { status: "rejected", rejectReason: reason, customerNotifyAt: new Date() },
     { by: { staffId, kind: "reject" } },
   );
+}
+// ── Payment and order (card-to-card, #19) ──────────────────────────────────────────────
+
+const AFTER_PAYMENT = "بعد از رسیدن فرم پرداخت این کار ممکن نیست.";
+
+/** Staff choose the payee card: a warehouse's card or another one. Only until a payment form arrives. */
+export async function setPayee(
+  staffId: string,
+  requestId: string,
+  input: { mode: "warehouse"; warehouseId: string } | { mode: "other"; cardNumber: string; cardHolder: string },
+): Promise<Result> {
+  let card: { cardNumber: string; cardHolder: string };
+  if (input.mode === "warehouse") {
+    const w = (await listWarehouses()).find((x) => x.id === input.warehouseId);
+    if (!w) return { ok: false, error: "انبار پیدا نشد" };
+    card = { cardNumber: w.cardNumber, cardHolder: w.cardHolder };
+  } else {
+    card = { cardNumber: input.cardNumber, cardHolder: input.cardHolder };
+  }
+  return move(
+    requestId,
+    "setPayee",
+    null,
+    { payeeCard: card.cardNumber, payeeName: card.cardHolder },
+    {
+      check: async (_tx, r) => (beforePayment(r) ? { ok: true } : { ok: false, error: AFTER_PAYMENT }),
+      by: { staffId, kind: "payee_card" },
+    },
+  );
+}
+
+/** UPLOAD_DIR/receipts: payment receipt photos. Private: served only to signed-in staff. */
+function receiptsDir() {
+  return path.resolve(/*turbopackIgnore: true*/ env.UPLOAD_DIR, "receipts");
+}
+
+/** Checks and saves a receipt photo. Returns its file name, or an error for the shopper. */
+async function saveReceipt(file: File): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+  if (file.size > MAX_RECEIPT_BYTES) return { ok: false, error: "حجم عکس رسید باید کمتر از ۱۰ مگابایت باشد" };
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const type = detectImageType(bytes);
+  if (!type) return { ok: false, error: "عکس رسید باید jpg، png یا webp باشد" };
+  const name = `${randomUUID()}.${type}`;
+  await mkdir(receiptsDir(), { recursive: true });
+  await writeFile(path.join(/*turbopackIgnore: true*/ receiptsDir(), name), bytes);
+  return { ok: true, name };
+}
+
+/**
+ * The receipt photo is saved as soon as the shopper picks it (so an error in the form never loses it).
+ * Only for the shopper's own request that is waiting for payment. Returns the file name for the form.
+ */
+export async function uploadReceipt(
+  customerId: string,
+  requestId: string,
+  file: File,
+): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+  const [r] = await db
+    .select()
+    .from(requestsRequests)
+    .where(and(eq(requestsRequests.id, requestId), eq(requestsRequests.customerId, customerId)));
+  if (!r || !canDo("pay", effectiveStatus(r, new Date()))) return { ok: false, error: NOT_ALLOWED };
+  return saveReceipt(file);
+}
+
+async function receiptExists(name: string): Promise<boolean> {
+  try {
+    await stat(path.join(/*turbopackIgnore: true*/ receiptsDir(), name));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The shopper's payment form after card-to-card. `amount` = this payment (several cards); null = all
+ * that is left. It may not be more than what is left (total − confirmed − waiting forms).
+ */
+export async function sendPayment(
+  customerId: string,
+  requestId: string,
+  form: {
+    tracking: string;
+    cardLast4: string;
+    paidDay: number;
+    paidHour: number;
+    paidMinute: number;
+    payeeCard: string;
+    amount: number | null;
+    receiptFile: string | null;
+  },
+): Promise<Result> {
+  const paidAt = paidAtFrom(form.paidDay, form.paidHour, form.paidMinute, new Date());
+  if (!paidAt) return { ok: false, error: "زمان پرداخت نمی‌تواند بعد از الان باشد" };
+  if (form.receiptFile && !(await receiptExists(form.receiptFile))) {
+    return { ok: false, error: "عکس رسید پیدا نشد. دوباره انتخابش کنید." };
+  }
+  return move(
+    requestId,
+    "pay",
+    customerId,
+    { status: "payment_sent", staffSeenAt: null },
+    {
+      check: async (tx, r) => {
+        if (!r.deliveryMethod) return { ok: false, error: "اول روش ارسال را انتخاب کنید" };
+        if (r.payeeCard !== form.payeeCard) return { ok: false, error: "کارت مقصد عوض شده است. صفحه را دوباره باز کنید." };
+        if (!r.payeeCard || !r.payeeName) {
+          return { ok: false, error: "کارت مقصد هنوز مشخص نشده است. با پشتیبانی تماس بگیرید." };
+        }
+        const { remaining } = await progressOf(tx, r);
+        if (remaining <= 0) return { ok: false, error: "مبلغ این سفارش کامل فرستاده شده است." };
+        if (form.amount !== null && form.amount > remaining) {
+          return { ok: false, error: `مبلغ بیشتر از باقی‌مانده است (باقی‌مانده: ${groupFa(remaining)} تومان)` };
+        }
+        return { ok: true };
+      },
+      also: async (tx, r) => {
+        // The first form stops the deadline; later forms keep the first time.
+        if (!r.paymentFormAt) await tx.update(requestsRequests).set({ paymentFormAt: new Date() }).where(eq(requestsRequests.id, requestId));
+        const { remaining } = await progressOf(tx, r);
+        await tx.insert(requestsPayments).values({
+          requestId,
+          amountToman: form.amount ?? remaining,
+          payeeCard: r.payeeCard ?? "",
+          payeeName: r.payeeName ?? "",
+          tracking: form.tracking,
+          cardLast4: form.cardLast4,
+          paidAt,
+          deliveryMethod: r.deliveryMethod ?? "pickup", // always set: checked above
+          receiptFile: form.receiptFile,
+        });
+      },
+    },
+  );
+}
+
+/** The invoice total and its payment forms, read inside the locked transaction. */
+async function progressOf(tx: Tx, r: typeof requestsRequests.$inferSelect) {
+  const [rows, payments] = await Promise.all([
+    tx.select().from(requestsRows).where(eq(requestsRows.requestId, r.id)),
+    tx
+      .select({ amountToman: requestsPayments.amountToman, verdict: requestsPayments.verdict })
+      .from(requestsPayments)
+      .where(eq(requestsPayments.requestId, r.id)),
+  ]);
+  const { total } = invoiceTotals(rows, { kind: r.discountKind, value: r.discountValue });
+  return { total, payments, ...paymentProgress(total, payments) };
+}
+
+/**
+ * Staff answer one waiting payment form. The order then moves by what is confirmed: paid when the
+ * confirmed amount covers the total, still «payment sent» while other forms wait, else awaiting payment.
+ */
+function decide(staffId: string, requestId: string, paymentId: string, verdict: "confirmed" | "not_found", reason = "") {
+  return async (tx: Tx, r: typeof requestsRequests.$inferSelect) => {
+    const updated = await tx
+      .update(requestsPayments)
+      .set({ verdict, verdictReason: reason, decidedBy: staffId, decidedAt: new Date() })
+      .where(
+        and(eq(requestsPayments.id, paymentId), eq(requestsPayments.requestId, requestId), eq(requestsPayments.verdict, "pending")),
+      )
+      .returning({ id: requestsPayments.id });
+    if (updated.length === 0) throw new PaymentGone();
+    const { total, payments } = await progressOf(tx, r);
+    await tx
+      .update(requestsRequests)
+      .set({ status: statusAfterPayments(total, payments) })
+      .where(eq(requestsRequests.id, requestId));
+    if (verdict === "not_found") await tx.insert(requestsMessages).values({ requestId, body: `پرداخت پیدا نشد: ${reason}` });
+  };
+}
+
+/** The form was already answered by someone else: the transaction rolls back. */
+class PaymentGone extends Error {}
+
+async function answerPayment(
+  staffId: string,
+  requestId: string,
+  paymentId: string,
+  verdict: "confirmed" | "not_found",
+  reason: string,
+): Promise<Result> {
+  try {
+    return await move(
+      requestId,
+      verdict === "confirmed" ? "confirmPayment" : "paymentNotFound",
+      null,
+      { customerNotifyAt: new Date() },
+      {
+        also: decide(staffId, requestId, paymentId, verdict, reason),
+        by: { staffId, kind: verdict === "confirmed" ? "payment_confirmed" : "payment_not_found" },
+      },
+    );
+  } catch (e) {
+    if (e instanceof PaymentGone) return { ok: false, error: "این فرم پرداخت قبلاً بررسی شده است. صفحه را دوباره باز کنید." };
+    throw e;
+  }
+}
+
+export const confirmPayment = (staffId: string, requestId: string, paymentId: string) =>
+  answerPayment(staffId, requestId, paymentId, "confirmed", "");
+
+/** «پرداخت پیدا نشد» for one form: the shopper sees the reason and can send it again. */
+export async function paymentNotFound(staffId: string, requestId: string, paymentId: string, reason: string): Promise<Result> {
+  if (!reason.trim()) return { ok: false, error: "دلیل را بنویسید" };
+  return answerPayment(staffId, requestId, paymentId, "not_found", reason);
+}
+
+export const markCollecting = (staffId: string, requestId: string) =>
+  move(requestId, "collect", null, { status: "collecting", customerNotifyAt: new Date() }, { by: { staffId, kind: "collecting" } });
+
+export const markShipped = (staffId: string, requestId: string, code: string) =>
+  move(
+    requestId,
+    "ship",
+    null,
+    { status: "shipped", shippingCode: code.trim(), customerNotifyAt: new Date() },
+    { check: async (_tx, r) => canShip(r.deliveryMethod, code), by: { staffId, kind: "shipped" } },
+  );
+
+/** «لغو و برگشت پول»: the order is cancelled; the money transfers back are recorded with `addRefund`. */
+export const refundOrder = (staffId: string, requestId: string, reason: string) =>
+  move(
+    requestId,
+    "refund",
+    null,
+    { status: "refunded", refundReason: reason, customerNotifyAt: new Date() },
+    {
+      check: async (_tx, r) =>
+        canCancelOrder(r.status, r.paymentFormAt) ? { ok: true } : { ok: false, error: "این سفارش هنوز پرداختی ندارد." },
+      by: { staffId, kind: "refunded" },
+    },
+  );
+
+/** The shopper picks the delivery method once, before paying (and may change it until the payment is confirmed). */
+export const setDelivery = (customerId: string, requestId: string, deliveryMethod: DeliveryMethod) =>
+  move(requestId, "setDelivery", customerId, { deliveryMethod });
+
+/** Staff type the parcel tracking code; it saves by itself, and the shopper sees it once shipped. */
+export const saveShippingCode = (requestId: string, code: string) =>
+  move(requestId, "shippingCode", null, { shippingCode: code.trim() });
+
+/** Staff: a refund receipt photo is saved as soon as it is picked. */
+export async function uploadRefundReceipt(file: File) {
+  return saveReceipt(file);
+}
+
+/**
+ * Staff record one money transfer back to the shopper. All transfers together may not be more than
+ * the confirmed payments. The shopper is notified and sees the amount, tracking and receipt.
+ */
+export async function addRefund(
+  staffId: string,
+  requestId: string,
+  input: { amount: number; tracking: string; receiptFile: string | null },
+): Promise<Result> {
+  if (input.receiptFile && !(await receiptExists(input.receiptFile))) {
+    return { ok: false, error: "عکس رسید پیدا نشد. دوباره انتخابش کنید." };
+  }
+  return move(
+    requestId,
+    "addRefund",
+    null,
+    { customerNotifyAt: new Date() },
+    {
+      check: async (tx, r) => {
+        const [payments, done] = await Promise.all([
+          tx
+            .select({ amountToman: requestsPayments.amountToman, verdict: requestsPayments.verdict })
+            .from(requestsPayments)
+            .where(eq(requestsPayments.requestId, r.id)),
+          tx.select({ amountToman: requestsRefunds.amountToman }).from(requestsRefunds).where(eq(requestsRefunds.requestId, r.id)),
+        ]);
+        const confirmed = payments.reduce((sum, p) => sum + (p.verdict === "confirmed" ? p.amountToman : 0), 0);
+        const left = refundable(confirmed, done);
+        if (left <= 0) return { ok: false, error: "پول تأیید شده‌ای برای برگرداندن نمانده است" };
+        if (input.amount > left) return { ok: false, error: `مبلغ بیشتر از پول قابل برگشت است (${groupFa(left)} تومان)` };
+        return { ok: true };
+      },
+      also: async (tx) => {
+        await tx.insert(requestsRefunds).values({
+          requestId,
+          amountToman: input.amount,
+          tracking: input.tracking,
+          receiptFile: input.receiptFile,
+          createdBy: staffId,
+        });
+      },
+      by: { staffId, kind: "refund_paid" },
+    },
+  );
+}
+
+/** A receipt photo for signed-in staff only; null for anyone else or a bad name. */
+export async function readReceipt(name: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  if (!(await getCurrentStaff()) || !isSafePhotoName(name)) return null;
+  return readPhoto(name);
+}
+
+/**
+ * A refund receipt photo: for signed-in staff, or for the shopper of the request it belongs to.
+ * null for anyone else or a bad name.
+ */
+export async function readRefundReceipt(name: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  if (!isSafePhotoName(name)) return null;
+  if (!(await getCurrentStaff())) {
+    const customer = await getCurrentCustomer();
+    if (!customer) return null;
+    const [own] = await db
+      .select({ id: requestsRefunds.id })
+      .from(requestsRefunds)
+      .innerJoin(requestsRequests, eq(requestsRequests.id, requestsRefunds.requestId))
+      .where(and(eq(requestsRefunds.receiptFile, name), eq(requestsRequests.customerId, customer.id)));
+    if (!own) return null;
+  }
+  return readPhoto(name);
+}
+
+async function readPhoto(name: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  try {
+    const bytes = await readFile(path.join(/*turbopackIgnore: true*/ receiptsDir(), name));
+    const ext = name.slice(name.lastIndexOf(".") + 1) as keyof typeof PHOTO_CONTENT_TYPES;
+    return { bytes, contentType: PHOTO_CONTENT_TYPES[ext] };
+  } catch {
+    return null;
+  }
 }

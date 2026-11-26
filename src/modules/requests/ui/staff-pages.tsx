@@ -7,6 +7,7 @@ import { canDo, HISTORY_LABELS, rowProfit, parseStaffTab, profitTotal, quantityT
 import { canSee, requireStaff } from "@/modules/staff";
 import { getRequestForStaff, listRequestsForStaff, staffTabCounts } from "../service";
 import { ClickableRow } from "./clickable-row";
+import { StaffPayment } from "./payment-view";
 import { fa, faDateTime, toman } from "./format";
 import {
   discountLabel,
@@ -145,8 +146,8 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
       </section>
 
       {r.note && (
-        <section className="flex flex-col gap-1 rounded-xl border border-amber-200 bg-amber-50 p-4">
-          <h2 className="font-bold">توضیحات مشتری</h2>
+        <section className="flex flex-col gap-1 rounded-xl border border-green-500 bg-green-300 p-4">
+          <h2 className="font-bold text-red-600">سفارش اضافه</h2>
           <p className="text-sm whitespace-pre-line">{r.note}</p>
         </section>
       )}
@@ -216,6 +217,8 @@ export async function StaffRequest({ params }: { params: Promise<{ id: string }>
           </>
         )}
       </section>
+
+      <StaffPayment r={r} cards={r.warehouseCards} />
 
       {r.history.length > 0 && (
         <section className="flex flex-col gap-1">

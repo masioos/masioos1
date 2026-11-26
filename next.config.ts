@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
   experimental: {
     // Product photos and supplier Excel files are up to 5 MB each (catalog, #1).
-    serverActions: { bodySizeLimit: "6mb" },
+    serverActions: { bodySizeLimit: "11mb" },
   },
   turbopack: {
     rules: {

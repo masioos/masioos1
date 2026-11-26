@@ -7,7 +7,7 @@ import { faDateTime } from "@/lib/date";
 import { safeNextPath } from "@/lib/mobile";
 import { staffSignOutAction } from "../actions";
 import { getCurrentStaff, listStaff, requireManager, requireStaff } from "../service";
-import { AddSellerForm, ResetPasswordButton, StaffLoginForm, SwitchBox } from "./staff-forms";
+import { AddSellerForm, ResetPasswordButton, SellerRowActions, StaffLoginForm, SwitchBox } from "./staff-forms";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -86,6 +86,7 @@ export async function StaffTable() {
           <TableHeader>
             <TableRow>
               <TableHead>نام</TableHead>
+              <TableHead>ویرایش / حذف</TableHead>
               <TableHead>شماره همراه</TableHead>
               <TableHead className="text-center">فعال</TableHead>
               <TableHead className="text-center">قیمت خرید</TableHead>
@@ -108,6 +109,7 @@ export async function StaffTable() {
                       {s.online && <span className="ms-2 text-green-700">● آنلاین</span>}
                     </span>
                   </TableCell>
+                  <TableCell>{seller ? <SellerRowActions staffId={s.id} fullName={s.fullName} mobile={s.mobile} /> : "—"}</TableCell>
                   <TableCell dir="ltr" className="text-end">
                     {s.mobile}
                   </TableCell>

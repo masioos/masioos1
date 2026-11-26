@@ -15,6 +15,10 @@ export async function createWarehouse(input: NewWarehouse) {
   return row;
 }
 
+export async function setWarehouseCard(id: string, cardNumber: string, cardHolder: string) {
+  await db.update(warehouses).set({ cardNumber, cardHolder }).where(eq(warehouses.id, id));
+}
+
 export async function setWarehouseProfit(id: string, profitBp: number) {
   await db.update(warehouses).set({ profitBp }).where(eq(warehouses.id, id));
 }

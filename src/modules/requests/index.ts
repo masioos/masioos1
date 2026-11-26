@@ -9,3 +9,6 @@ export { MyRequest, MyRequests } from "./ui/shopper-pages";
 // Admin
 export { RequestsTable, StaffRequest } from "./ui/staff-pages";
 export { RequestsMenuBadge } from "./ui/admin-alert";
+// Receipt photos: payments at /admin/receipts/<file> (staff only); refunds at
+// /requests/refund-receipts/<file> (staff and the shopper of that request).
+export { readReceipt, readRefundReceipt } from "./service";

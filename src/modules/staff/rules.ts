@@ -73,6 +73,9 @@ export const addSellerSchema = z.object({
 
 export const staffIdSchema = z.object({ staffId: z.uuid() });
 
+/** The manager fixes a seller's name or mobile. */
+export const editSellerSchema = addSellerSchema.extend({ staffId: z.uuid() });
+
 export const switchSchema = z.object({
   staffId: z.uuid(),
   which: z.enum(["active", "purchasePrice", "profit"]),

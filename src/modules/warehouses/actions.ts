@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { newWarehouseSchema, setProfitSchema } from "./rules";
-import { createWarehouse, setWarehouseProfit } from "./service";
+import { newWarehouseSchema, setCardSchema, setProfitSchema } from "./rules";
+import { createWarehouse, setWarehouseCard, setWarehouseProfit } from "./service";
 import { requireManager } from "@/modules/staff";
 
 export type CreateWarehouseState = { error?: string; ok?: boolean };
@@ -17,6 +17,17 @@ export async function createWarehouseAction(
   const parsed = newWarehouseSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   await createWarehouse(parsed.data);
+  revalidatePath("/admin/warehouses");
+  return { ok: true };
+}
+
+export type SetCardState = { error?: string; ok?: boolean };
+
+export async function setWarehouseCardAction(_prev: SetCardState, formData: FormData): Promise<SetCardState> {
+  await requireManager();
+  const parsed = setCardSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  await setWarehouseCard(parsed.data.id, parsed.data.cardNumber, parsed.data.cardHolder);
   revalidatePath("/admin/warehouses");
   return { ok: true };
 }

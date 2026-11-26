@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addSellerSchema,
+  editSellerSchema,
   can,
   canSee,
   IDLE_HOURS,
@@ -68,6 +69,12 @@ describe("forms", () => {
       mobile: "09121112233",
     });
     expect(addSellerSchema.safeParse({ fullName: "ع", mobile: "09121112233" }).success).toBe(false);
+  });
+  it("editing a seller names the person and checks name and mobile again", () => {
+    const id = "6f1c2c1e-8a4b-4c55-9d7e-1a2b3c4d5e6f";
+    expect(editSellerSchema.parse({ staffId: id, fullName: "علی رضایی", mobile: "۰۹۱۲۱۱۱۲۲۳۳" }).mobile).toBe("09121112233");
+    expect(editSellerSchema.safeParse({ staffId: id, fullName: "علی رضایی", mobile: "123" }).success).toBe(false);
+    expect(editSellerSchema.safeParse({ fullName: "علی رضایی", mobile: "09121112233" }).success).toBe(false);
   });
   it("a switch names the person, which switch, and on or off", () => {
     const id = "6f1c2c1e-8a4b-4c55-9d7e-1a2b3c4d5e6f";

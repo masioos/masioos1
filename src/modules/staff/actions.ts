@@ -3,8 +3,18 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { safeNextPath } from "@/lib/mobile";
-import { addSellerSchema, staffIdSchema, staffLoginSchema, switchSchema } from "./rules";
-import { addSeller, LOGIN_PATH, requireManager, resetSellerPassword, setSellerSwitch, signIn, signOut } from "./service";
+import { addSellerSchema, editSellerSchema, staffIdSchema, staffLoginSchema, switchSchema } from "./rules";
+import {
+  addSeller,
+  deleteSeller,
+  editSeller,
+  LOGIN_PATH,
+  requireManager,
+  resetSellerPassword,
+  setSellerSwitch,
+  signIn,
+  signOut,
+} from "./service";
 
 // Server actions of the staff module. All validated on the server; manager actions check the role.
 
@@ -48,6 +58,31 @@ export async function resetPasswordAction(prev: PasswordState, formData: FormDat
   const res = await resetSellerPassword(parsed.data.staffId);
   if (!res.ok) return { error: res.error, attempt };
   return { password: res.password, attempt };
+}
+
+/** The manager's answer to a seller edit or delete. */
+export type SellerState = { error?: string; ok?: boolean; attempt?: number };
+
+export async function editSellerAction(prev: SellerState, formData: FormData): Promise<SellerState> {
+  await requireManager();
+  const attempt = (prev.attempt ?? 0) + 1;
+  const parsed = editSellerSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "اطلاعات درست نیست", attempt };
+  const res = await editSeller(parsed.data.staffId, parsed.data.fullName, parsed.data.mobile);
+  if (!res.ok) return { error: res.error, attempt };
+  revalidatePath("/admin/staff");
+  return { ok: true, attempt };
+}
+
+export async function deleteSellerAction(prev: SellerState, formData: FormData): Promise<SellerState> {
+  await requireManager();
+  const attempt = (prev.attempt ?? 0) + 1;
+  const parsed = staffIdSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "فروشنده پیدا نشد", attempt };
+  const res = await deleteSeller(parsed.data.staffId);
+  if (!res.ok) return { error: res.error, attempt };
+  revalidatePath("/admin/staff");
+  return { ok: true, attempt };
 }
 
 export async function setSwitchAction(formData: FormData): Promise<{ error?: string }> {

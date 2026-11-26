@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
-import { and, asc, count, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
@@ -48,7 +48,10 @@ export async function signIn(mobile: string, password: string): Promise<Result> 
     .from(staffSignInFailures)
     .where(and(eq(staffSignInFailures.mobile, mobile), gt(staffSignInFailures.at, lockSince)));
   if (isLocked(n - 1)) return { ok: false, error: LOCKED_MESSAGE };
-  const [u] = await db.select().from(staffUsers).where(eq(staffUsers.mobile, mobile));
+  const [u] = await db
+    .select()
+    .from(staffUsers)
+    .where(and(eq(staffUsers.mobile, mobile), isNull(staffUsers.deletedAt)));
   const passwordOk = verifyPassword(password, u?.passwordHash ?? DUMMY_HASH);
   if (!u || !u.isActive || !passwordOk) {
     // Old rows mean nothing any more.
@@ -178,7 +181,38 @@ export async function listStaff() {
       online: sql<boolean>`exists (select 1 from staff_sessions ss where ss.staff_id = staff_users.id and ss.last_seen_at > ${idleLimit})`,
     })
     .from(staffUsers)
+    .where(isNull(staffUsers.deletedAt))
     .orderBy(asc(staffUsers.role), asc(staffUsers.fullName));
+}
+
+const sellerWhere = (staffId: string) =>
+  and(eq(staffUsers.id, staffId), eq(staffUsers.role, "seller"), isNull(staffUsers.deletedAt));
+
+/** The manager fixes a seller's name or mobile. A new mobile is the new sign-in name. */
+export async function editSeller(staffId: string, fullName: string, mobile: string): Promise<Result> {
+  const [taken] = await db
+    .select({ id: staffUsers.id })
+    .from(staffUsers)
+    .where(and(eq(staffUsers.mobile, mobile), isNull(staffUsers.deletedAt), ne(staffUsers.id, staffId)));
+  if (taken) return { ok: false, error: "این شماره برای کس دیگری ثبت شده است" };
+  const updated = await db.update(staffUsers).set({ fullName, mobile }).where(sellerWhere(staffId)).returning({ id: staffUsers.id });
+  if (updated.length === 0) return { ok: false, error: "فروشنده پیدا نشد" };
+  return { ok: true };
+}
+
+/**
+ * «حذف»: the seller leaves the list and is signed out; the row stays so request history keeps the
+ * name. The mobile is free for a new seller.
+ */
+export async function deleteSeller(staffId: string): Promise<Result> {
+  const updated = await db
+    .update(staffUsers)
+    .set({ deletedAt: new Date(), isActive: false })
+    .where(sellerWhere(staffId))
+    .returning({ id: staffUsers.id });
+  if (updated.length === 0) return { ok: false, error: "فروشنده پیدا نشد" };
+  await db.delete(staffSessions).where(eq(staffSessions.staffId, staffId));
+  return { ok: true };
 }
 
 /** A new seller with a new password, shown once to the manager. */
@@ -199,7 +233,7 @@ export async function resetSellerPassword(staffId: string): Promise<Result<{ pas
   const updated = await db
     .update(staffUsers)
     .set({ passwordHash: hashPassword(password) })
-    .where(and(eq(staffUsers.id, staffId), eq(staffUsers.role, "seller")))
+    .where(sellerWhere(staffId))
     .returning({ id: staffUsers.id });
   if (updated.length === 0) return { ok: false, error: "فروشنده پیدا نشد" };
   await db.delete(staffSessions).where(eq(staffSessions.staffId, staffId));
@@ -213,7 +247,7 @@ export async function setSellerSwitch(staffId: string, which: "active" | "purcha
   const updated = await db
     .update(staffUsers)
     .set(set)
-    .where(and(eq(staffUsers.id, staffId), eq(staffUsers.role, "seller")))
+    .where(sellerWhere(staffId))
     .returning({ id: staffUsers.id });
   if (updated.length === 0) return { ok: false, error: "فروشنده پیدا نشد" };
   if (which === "active" && !on) await db.delete(staffSessions).where(eq(staffSessions.staffId, staffId));

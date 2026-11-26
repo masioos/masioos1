@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/table";
 import { formatProfitPercent } from "../rules";
 import { listWarehouses } from "../service";
+import { CardForm } from "./card-form";
 import { ProfitForm } from "./profit-form";
 
 // Server Component: reads the list straight from the service.
@@ -21,7 +22,7 @@ export async function WarehouseTable() {
         <TableRow>
           <TableHead>نام انبار</TableHead>
           <TableHead>صاحب انبار</TableHead>
-          <TableHead>شماره کارت</TableHead>
+          <TableHead>شماره کارت و نام صاحب کارت</TableHead>
           <TableHead>درصد سود</TableHead>
         </TableRow>
       </TableHeader>
@@ -30,7 +31,9 @@ export async function WarehouseTable() {
           <TableRow key={w.id}>
             <TableCell>{w.name}</TableCell>
             <TableCell>{w.ownerName}</TableCell>
-            <TableCell dir="ltr">{w.cardNumber}</TableCell>
+            <TableCell>
+              <CardForm id={w.id} cardNumber={w.cardNumber} cardHolder={w.cardHolder} />
+            </TableCell>
             <TableCell>
               <ProfitForm id={w.id} percent={formatProfitPercent(w.profitBp)} />
             </TableCell>

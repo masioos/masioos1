@@ -51,7 +51,7 @@ function FilterSelect({
 const named = (list: { id: string; name: string }[]) => list.map((o) => ({ id: o.id, label: o.name }));
 
 /** Shop home: one search box (name / code / brand) + car, category, brand and country filters. */
-export async function ShopSearch({ searchParams }: { searchParams: SearchParams }) {
+export async function ShopSearch({ searchParams, action }: { searchParams: SearchParams; action?: ProductAction }) {
   const sp = await searchParams;
   const s = {
     q: one(sp.q).slice(0, 100),
@@ -106,7 +106,7 @@ export async function ShopSearch({ searchParams }: { searchParams: SearchParams 
         </div>
       </form>
 
-      {items.length === 0 ? <p>کالایی با این مشخصات پیدا نشد.</p> : <ProductGrid products={items} />}
+      {items.length === 0 ? <p>کالایی با این مشخصات پیدا نشد.</p> : <ProductGrid products={items} action={action} />}
       <Pager basePath="/" params={pagerParams} page={s.page} pages={Math.ceil(total / s.pageSize)} />
     </div>
   );

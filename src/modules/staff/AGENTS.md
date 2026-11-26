@@ -8,7 +8,7 @@ every module with admin pages or staff actions depends on it (`requireStaff` / `
 | `schema.ts`   | `staff_users`, `staff_sessions`                                               |
 | `rules.ts`    | roles, `canSee` (purchase price / profit), `can`, `newPassword`, schemas + tests |
 | `service.ts`  | sign in / out, `getCurrentStaff`, `requireStaff`, `requireManager`, sellers page, `noteStaffAction`, `getStaffNames` |
-| `actions.ts`  | sign-in, sign-out, add seller, «رمز جدید», switches                           |
+| `actions.ts`  | sign-in, sign-out, add / edit / delete seller, «رمز جدید», switches            |
 | `ui/`         | sign-in form, `StaffMenu` (admin nav), `StaffTable`, `ManagerOnly` / `StaffOnly` page guards |
 
 Rules:
@@ -30,6 +30,9 @@ Rules:
   live site; `/admin/...` without a staff cookie answers 404 (`src/proxy.ts`). Unset = open `/admin/login`.
   Sign-out and expired sessions go to `LOGIN_PATH`. Nothing on the shop links to the admin.
 - Nobody sees a password. «رمز جدید» makes one and shows it once; it signs that seller out.
-- Staff are never deleted (request history points at them). Inactive = cannot sign in, signed out at once.
+- The manager can fix a seller's name and mobile («ویرایش») and «حذف» a seller (asks once more). Rows are never
+  removed (request history points at them): «حذف» sets `deleted_at` — gone from the list, cannot sign in,
+  signed out at once, name kept in history, the mobile free again (unique only among non-deleted staff).
+  Inactive = cannot sign in, signed out at once.
 - The manager is made on the server: `pnpm staff:manager 09121234567 "Full Name"` (also resets the
   manager's password). Never commit the printed password.
