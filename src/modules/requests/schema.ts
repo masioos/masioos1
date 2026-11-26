@@ -38,7 +38,36 @@ export const requestsCartLines = pgTable(
   (t) => [primaryKey({ columns: [t.cartId, t.productId] })],
 );
 
-export const requestStatuses = ["awaiting", "confirmed", "accepted", "cancelled", "rejected", "declined"] as const;
+// After «قبول»: accepted = awaiting payment → payment_sent → paid → collecting → shipped; refunded (#19).
+export const requestStatuses = [
+  "awaiting",
+  "confirmed",
+  "accepted",
+  "cancelled",
+  "rejected",
+  "declined",
+  "payment_sent",
+  "paid",
+  "collecting",
+  "shipped",
+  "refunded",
+] as const;
+
+export const deliveryMethods = ["tipax", "post", "courier", "pickup"] as const;
+
+export const historyKinds = [
+  "confirm",
+  "reject",
+  "reopen",
+  "edit",
+  "payee_card",
+  "payment_confirmed",
+  "payment_not_found",
+  "collecting",
+  "shipped",
+  "refunded",
+  "refund_paid",
+] as const;
 
 export const requestsRequests = pgTable("requests_requests", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -65,6 +94,62 @@ export const requestsRequests = pgTable("requests_requests", {
   // Discount on the whole invoice (rules.invoiceTotals): a percent 0–100 or an amount in Toman.
   discountKind: text("discount_kind", { enum: ["none", "percent", "amount"] }).notNull().default("none"),
   discountValue: bigint("discount_value", { mode: "number" }).notNull().default(0),
+  // ── Payment and order (#19) ──
+  // The card the shopper pays to, and the name on it. Suggested at confirm; staff may change it
+  // until the first payment form arrives. Recorded for accounting.
+  payeeCard: text("payee_card"),
+  payeeName: text("payee_name"),
+  // The first payment form. Once set, the deadline no longer applies (rules.effectiveStatus).
+  paymentFormAt: ts("payment_form_at"),
+  deliveryMethod: text("delivery_method", { enum: deliveryMethods }),
+  shippingCode: text("shipping_code").notNull().default(""),
+  refundReason: text("refund_reason").notNull().default(""),
+  refundTracking: text("refund_tracking").notNull().default(""),
+});
+
+/**
+ * One payment form the shopper sent (card-to-card). Kept forever for accounting: who paid how much,
+ * to which card, and who on the staff confirmed it. A «پرداخت پیدا نشد» answer keeps the row.
+ */
+export const requestsPayments = pgTable("requests_payments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  requestId: uuid("request_id")
+    .notNull()
+    .references(() => requestsRequests.id, { onDelete: "cascade" }),
+  // The invoice total when the form was sent, whole Toman.
+  amountToman: bigint("amount_toman", { mode: "number" }).notNull(),
+  payeeCard: text("payee_card").notNull(),
+  payeeName: text("payee_name").notNull(),
+  tracking: text("tracking").notNull(),
+  cardLast4: text("card_last4").notNull(),
+  paidAt: ts("paid_at").notNull(),
+  deliveryMethod: text("delivery_method", { enum: deliveryMethods }).notNull(),
+  // "<uuid>.<jpg|png|webp>" under UPLOAD_DIR/receipts. Staff only; never public.
+  receiptFile: text("receipt_file"),
+  verdict: text("verdict", { enum: ["pending", "confirmed", "not_found"] }).notNull().default("pending"),
+  verdictReason: text("verdict_reason").notNull().default(""),
+  decidedBy: uuid("decided_by").references(() => staffUsers.id),
+  decidedAt: ts("decided_at"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+/**
+ * Money staff sent back to the shopper (#19): one row per transfer, with an optional receipt photo
+ * the shopper can see. Kept forever for accounting. Their sum never exceeds the confirmed payments.
+ */
+export const requestsRefunds = pgTable("requests_refunds", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  requestId: uuid("request_id")
+    .notNull()
+    .references(() => requestsRequests.id, { onDelete: "cascade" }),
+  amountToman: bigint("amount_toman", { mode: "number" }).notNull(),
+  tracking: text("tracking").notNull(),
+  // "<uuid>.<jpg|png|webp>" under UPLOAD_DIR/receipts. Seen by staff and by this request's shopper.
+  receiptFile: text("receipt_file"),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => staffUsers.id),
+  createdAt: ts("created_at").notNull().defaultNow(),
 });
 
 export const requestsRows = pgTable("requests_rows", {
@@ -118,7 +203,7 @@ export const requestsHistory = pgTable(
     staffId: uuid("staff_id")
       .notNull()
       .references(() => staffUsers.id),
-    kind: text("kind", { enum: ["confirm", "reject", "reopen", "edit"] }).notNull(),
+    kind: text("kind", { enum: historyKinds }).notNull(),
     at: ts("at").notNull().defaultNow(),
   },
   (t) => [

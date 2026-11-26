@@ -7,7 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   addSellerAction,
+  deleteSellerAction,
+  editSellerAction,
   resetPasswordAction,
+  type SellerState,
   setSwitchAction,
   staffSignInAction,
   type PasswordState,
@@ -91,6 +94,67 @@ export function ResetPasswordButton({ staffId }: { staffId: string }) {
       </Button>
       <ShownPassword state={state} />
     </form>
+  );
+}
+
+/**
+ * «ویرایش» opens the name and mobile boxes of one seller; «حذف» asks once more before removing the
+ * seller from the list (their name stays in request history).
+ */
+export function SellerRowActions({ staffId, fullName, mobile }: { staffId: string; fullName: string; mobile: string }) {
+  const [mode, setMode] = useState<"idle" | "edit" | "delete">("idle");
+  const [editState, editAction, saving] = useActionState(async (prev: SellerState, fd: FormData) => {
+    const res = await editSellerAction(prev, fd);
+    if (res.ok) setMode("idle");
+    return res;
+  }, {});
+  const [deleteState, deleteAction, deleting] = useActionState(deleteSellerAction, {});
+
+  if (mode === "edit") {
+    return (
+      <form action={editAction} className="flex flex-col gap-2">
+        <input type="hidden" name="staffId" value={staffId} />
+        <Input name="fullName" aria-label="نام و نام خانوادگی" defaultValue={fullName} className="w-48" />
+        <Input name="mobile" aria-label="شماره همراه" dir="ltr" inputMode="tel" defaultValue={mobile} className="w-48" />
+        <span className="flex gap-2">
+          <Button type="submit" size="sm" disabled={saving}>
+            {saving ? "در حال ذخیره…" : "ذخیره"}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setMode("idle")}>
+            انصراف
+          </Button>
+        </span>
+        {editState.error && <span className="text-destructive text-xs">{editState.error}</span>}
+      </form>
+    );
+  }
+  if (mode === "delete") {
+    return (
+      <form action={deleteAction} className="flex flex-col gap-2 rounded-md border border-red-300 bg-red-50 p-2">
+        <input type="hidden" name="staffId" value={staffId} />
+        <span className="text-xs">«{fullName}» حذف شود؟ دیگر نمی‌تواند وارد شود. نامش در تاریخچه‌ی فاکتورها می‌ماند.</span>
+        <span className="flex gap-2">
+          <Button type="submit" size="sm" variant="destructive" disabled={deleting}>
+            {deleting ? "در حال حذف…" : "بله، حذف شود"}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setMode("idle")}>
+            نه
+          </Button>
+        </span>
+        {deleteState.error && <span className="text-destructive text-xs">{deleteState.error}</span>}
+      </form>
+    );
+  }
+  return (
+    <span className="flex gap-2">
+      <Button type="button" size="sm" variant="outline" onClick={() => setMode("edit")}>
+        ویرایش
+      </Button>
+      <Button type="button" size="sm" variant="outline" className="border-red-300 text-red-700" onClick={() => setMode("delete")}>
+        حذف
+      </Button>
+      {editState.ok && <span className="self-center text-xs text-green-700">✓ ذخیره شد</span>}
+    </span>
   );
 }
 

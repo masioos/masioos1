@@ -35,7 +35,7 @@ const hash = `scrypt:${salt.toString("hex")}:${scryptSync(password.normalize("NF
 
 const sql = postgres(process.env.DATABASE_URL, { max: 1 });
 try {
-  const [existing] = await sql`select id, role from staff_users where mobile = ${mobile}`;
+  const [existing] = await sql`select id, role from staff_users where mobile = ${mobile} and deleted_at is null`;
   if (existing && existing.role !== "manager") {
     console.error("This mobile belongs to a seller. Use another mobile for the manager.");
     process.exit(1);
@@ -45,7 +45,7 @@ try {
     await sql`delete from staff_sessions where staff_id = ${existing.id}`;
     console.log(`✔ new password for the manager ${mobile}`);
   } else {
-    const [other] = await sql`select id from staff_users where role = 'manager'`;
+    const [other] = await sql`select id from staff_users where role = 'manager' and deleted_at is null`;
     if (other) {
       console.error("A manager already exists. Run this with the manager's mobile to give a new password.");
       process.exit(1);

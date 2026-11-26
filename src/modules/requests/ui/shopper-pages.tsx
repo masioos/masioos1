@@ -5,6 +5,7 @@ import { isUuid } from "../ids";
 import { canDo, STATUS_NAMES } from "../rules";
 import { getMyRequest, listMyRequests } from "../service";
 import { faDateTime, toman, fa } from "./format";
+import { ShopperPayment } from "./payment-view";
 import { Messages, RowsTable, StatusBadge } from "./request-view";
 import { AcceptDeclineButtons, CancelButton, ShopperMessageForm } from "./shopper-actions";
 
@@ -68,11 +69,9 @@ export async function MyRequest({ params, searchParams }: { params: Promise<{ id
           <AcceptDeclineButtons requestId={r.id} deadlineSeen={r.deadlineAt?.toISOString() ?? ""} />
         </div>
       )}
-      {r.status === "accepted" && (
-        <p className="rounded-lg bg-green-50 p-3 text-green-800">پذیرفته شد، برای پرداخت با شما تماس می‌گیریم.</p>
-      )}
+      <ShopperPayment r={r} />
       {r.status === "expired" && (
-        <p className="bg-muted rounded-lg p-3">مهلت پاسخ به این درخواست تمام شده است. اگر هنوز کالا را می‌خواهید، دوباره درخواست دهید.</p>
+        <p className="bg-muted rounded-lg p-3">مهلت این درخواست تمام شده است. اگر هنوز کالا را می‌خواهید، با پشتیبانی تماس بگیرید یا دوباره درخواست دهید.</p>
       )}
       {r.status === "rejected" && (
         <p className="bg-destructive/5 text-destructive rounded-lg p-3">این درخواست رد شد. دلیل: {r.rejectReason}</p>

@@ -45,10 +45,9 @@ validates with zod (`rules.ts`) and calls `service.ts`.
 | `pricing`    | planned  | prices: manual, uploaded PDF price list, online feed                   |
 | `customers`  | built    | shopper accounts (mobile + password) and sessions                      |
 | `staff`      | built    | manager and sellers: admin sign-in, permissions, sellers page          |
-| `requests`   | built    | cart, request, staff edit / confirm / reject, deadline, alerts, history |
+| `requests`   | built    | cart, request, staff edit / confirm / reject, deadline, alerts, history; order status and card-to-card payment (#19) |
 | `settings`   | built    | shop-wide settings (support phone)                                     |
-| `orders`     | planned  | order status: received → paid → collecting → shipped (Tipax / post)    |
-| `payments`   | planned  | gateway (+15%) or card-to-card to the warehouse card, editable per order |
+| `payments`   | planned  | online gateway (+15%, #20); card-to-card lives in `requests` for now    |
 | `accounting` | planned  | invoices and ledger; receives every paid order                         |
 
 "Planned" modules come from the customer notes and do not exist yet. Each one starts with a
@@ -60,7 +59,8 @@ validates with zod (`rules.ts`) and calls `service.ts`.
 - A module reads or writes only its own tables. To use another module's data, call a function that
   module exports from `index.ts`.
 - All modules share one DB and one transaction scope. No events, no queues.
-- Dependency direction: `requests` → `catalog`, `customers`, `warehouses`; `catalog` → `warehouses`.
+- Dependency direction: `requests` → `catalog`, `customers`, `warehouses`, `settings` (gateway tax percent,
+  #19); `catalog` → `warehouses`.
   Every module with admin pages or staff actions → `staff` (sign-in checks); `staff` depends on none.
   `catalog` shows the add-to-cart button through a render prop the page passes in.
 - A module's `schema.ts` may import another module's `schema.ts` only to declare a foreign key

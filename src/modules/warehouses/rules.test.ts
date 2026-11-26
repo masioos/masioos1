@@ -17,6 +17,7 @@ describe("newWarehouseSchema", () => {
     name: "انبار آقای الف",
     ownerName: "آقای الف",
     cardNumber: "6037 9975 1234 5678",
+    cardHolder: "رضا احمدی",
     profitBp: "10",
   };
 
@@ -28,6 +29,8 @@ describe("newWarehouseSchema", () => {
 
   it("rejects a card number that is not 16 digits", () => {
     expect(newWarehouseSchema.safeParse({ ...valid, cardNumber: "1234" }).success).toBe(false);
+    // The card holder is required (it is shown to shoppers who pay).
+    expect(newWarehouseSchema.safeParse({ ...valid, cardHolder: "" }).success).toBe(false);
   });
 
   it("rejects a profit above 100", () => {

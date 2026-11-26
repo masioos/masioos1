@@ -6,6 +6,14 @@ import { z } from "zod";
 import { addressSchema, getCurrentCustomer } from "@/modules/customers";
 import { canSee, requireStaff, type CurrentStaff } from "@/modules/staff";
 import {
+  payeeSchema,
+  paymentFormSchema,
+  paymentVerdictSchema,
+  refundSchema,
+  shipSchema,
+  addRefundSchema,
+  deliverySchema,
+  shippingCodeSchema,
   addRowSchema,
   confirmSchema,
   invoiceDiscountSchema,
@@ -34,12 +42,24 @@ import {
   myUnseenCount,
   staffAlertCounts,
   submitRequest,
+  confirmPayment,
+  markCollecting,
+  markShipped,
+  paymentNotFound,
+  refundOrder,
+  sendPayment,
+  setPayee,
+  uploadReceipt,
+  addRefund,
+  saveShippingCode,
+  setDelivery,
+  uploadRefundReceipt,
 } from "./service";
 
 // Server actions of the requests module. Every input is validated here with zod.
-// Staff actions have no sign-in yet (#9): fine on the local PC, required before going public.
+// Staff actions go through `staffStep` (requireStaff); shopper actions use the shopper session.
 
-export type FormState = { error?: string; ok?: boolean; attempt?: number };
+export type FormState = { error?: string; ok?: boolean; attempt?: number; values?: Record<string, string> };
 
 const refresh = () => revalidatePath("/", "layout");
 const first = (e: z.ZodError) => e.issues[0]?.message ?? "اطلاعات فرم درست نیست";
@@ -229,4 +249,110 @@ export async function reopenRequestAction(prev: FormState, formData: FormData): 
 export async function staffAlertCountsAction(): Promise<{ steps: number; messages: number }> {
   await requireStaff();
   return staffAlertCounts();
+}
+
+// ── Payment and order (#19) ────────────────────────────────────────────────────────────
+
+/** Shopper: the payment form after card-to-card (an optional receipt photo in `receipt`). */
+export async function sendPaymentAction(prev: FormState, formData: FormData): Promise<FormState> {
+  // After an error the form shows what was typed again (the photo must be chosen again).
+  const values: Record<string, string> = {};
+  for (const k of ["tracking", "cardLast4", "paidDay", "paidHour", "paidMinute", "amount", "receiptFile"]) {
+    const v = formData.get(k);
+    if (typeof v === "string") values[k] = v;
+  }
+  const again = (error: string) => ({ ...fail(prev, error), values });
+  const parsed = paymentFormSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return again(first(parsed.error));
+  const customer = await getCurrentCustomer();
+  if (!customer) return again("دوباره وارد شوید");
+  const { requestId, ...form } = parsed.data;
+  const res = await sendPayment(customer.id, requestId, form);
+  if (!res.ok) return again(res.error);
+  refresh();
+  return { ok: true, attempt: (prev.attempt ?? 0) + 1 };
+}
+
+/** Shopper: the receipt photo is saved as soon as it is picked; the form then sends its name. */
+export async function uploadReceiptAction(formData: FormData): Promise<{ name?: string; error?: string }> {
+  const parsed = requestIdSchema.safeParse({ requestId: formData.get("requestId") });
+  const file = formData.get("receipt");
+  if (!parsed.success || !(file instanceof File) || file.size === 0) return { error: "عکسی انتخاب نشد" };
+  const customer = await getCurrentCustomer();
+  if (!customer) return { error: "دوباره وارد شوید" };
+  const res = await uploadReceipt(customer.id, parsed.data.requestId, file);
+  return res.ok ? { name: res.name } : { error: res.error };
+}
+
+export async function setPayeeAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = payeeSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  const { requestId, ...input } = parsed.data;
+  return staffStep(prev, (by) => setPayee(by.id, requestId, input));
+}
+
+export async function confirmPaymentAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = paymentVerdictSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  return staffStep(prev, (by) => confirmPayment(by.id, parsed.data.requestId, parsed.data.paymentId));
+}
+
+export async function paymentNotFoundAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = paymentVerdictSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  return staffStep(prev, (by) => paymentNotFound(by.id, parsed.data.requestId, parsed.data.paymentId, parsed.data.reason));
+}
+
+export async function collectingAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = requestIdSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  return staffStep(prev, (by) => markCollecting(by.id, parsed.data.requestId));
+}
+
+export async function shippedAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = shipSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  return staffStep(prev, (by) => markShipped(by.id, parsed.data.requestId, parsed.data.code));
+}
+
+export async function refundAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = refundSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  return staffStep(prev, (by) => refundOrder(by.id, parsed.data.requestId, parsed.data.reason));
+}
+
+/** Shopper: the delivery method, saved as soon as it is picked (before «پرداخت با»). */
+export async function setDeliveryAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = deliverySchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  const customer = await getCurrentCustomer();
+  if (!customer) return fail(prev, "دوباره وارد شوید");
+  const res = await setDelivery(customer.id, parsed.data.requestId, parsed.data.deliveryMethod);
+  if (!res.ok) return fail(prev, res.error);
+  refresh();
+  return { ok: true, attempt: (prev.attempt ?? 0) + 1 };
+}
+
+/** Staff: the parcel tracking code, saved while typed. */
+export async function shippingCodeAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = shippingCodeSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  return staffStep(prev, () => saveShippingCode(parsed.data.requestId, parsed.data.code));
+}
+
+/** Staff: a refund receipt photo is saved as soon as it is picked; the form then sends its name. */
+export async function uploadRefundReceiptAction(formData: FormData): Promise<{ name?: string; error?: string }> {
+  await requireStaff();
+  const file = formData.get("receipt");
+  if (!(file instanceof File) || file.size === 0) return { error: "عکسی انتخاب نشد" };
+  const res = await uploadRefundReceipt(file);
+  return res.ok ? { name: res.name } : { error: res.error };
+}
+
+/** Staff: one money transfer back to the shopper. */
+export async function addRefundAction(prev: FormState, formData: FormData): Promise<FormState> {
+  const parsed = addRefundSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return fail(prev, first(parsed.error));
+  const { requestId, ...input } = parsed.data;
+  return staffStep(prev, (by) => addRefund(by.id, requestId, input));
 }

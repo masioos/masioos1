@@ -85,6 +85,27 @@
       "when": 1795527826390,
       "tag": "0011_staff_sign_in_failures",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795533993149,
+      "tag": "0012_payment",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795690479373,
+      "tag": "0013_refunds",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795692323418,
+      "tag": "0014_staff_deleted",
+      "breakpoints": true
     }
   ]
 }

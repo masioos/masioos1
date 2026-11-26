@@ -12,6 +12,11 @@ const STATUS_COLORS: Record<Status, string> = {
   rejected: "bg-destructive/10 text-destructive",
   declined: "bg-muted text-muted-foreground",
   expired: "bg-muted text-muted-foreground",
+  payment_sent: "bg-violet-100 text-violet-900",
+  paid: "bg-emerald-100 text-emerald-900",
+  collecting: "bg-sky-100 text-sky-900",
+  shipped: "bg-green-200 text-green-900",
+  refunded: "bg-destructive/10 text-destructive",
 };
 
 export function StatusBadge({ status, names }: { status: Status; names: Record<Status, string> }) {

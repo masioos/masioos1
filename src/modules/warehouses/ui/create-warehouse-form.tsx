@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
+import { CardInput } from "@/components/card-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createWarehouseAction } from "../actions";
@@ -16,7 +17,9 @@ export function CreateWarehouseForm() {
       <Label htmlFor="ownerName">صاحب انبار</Label>
       <Input id="ownerName" name="ownerName" required />
       <Label htmlFor="cardNumber">شماره کارت</Label>
-      <Input id="cardNumber" name="cardNumber" inputMode="numeric" dir="ltr" required />
+      <CardInput id="cardNumber" name="cardNumber" required />
+      <Label htmlFor="cardHolder">نام صاحب کارت</Label>
+      <Input id="cardHolder" name="cardHolder" required />
       <Label htmlFor="profitBp">درصد سود (روی قیمت خرید)</Label>
       <Input id="profitBp" name="profitBp" inputMode="decimal" dir="ltr" defaultValue="0" required />
       {state.error && <p className="text-destructive text-sm">{state.error}</p>}

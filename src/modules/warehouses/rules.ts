@@ -1,21 +1,9 @@
 import { z } from "zod";
+import { cardHolderSchema, cardNumberSchema, toAsciiDigits } from "@/lib/card";
 
 // Pure rules of the warehouses module: no DB, no React. Tests live next to this file.
 
-const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
-const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
-
-/** Persian/Arabic digits → ASCII. Other characters stay. */
-function toAsciiDigits(input: string): string {
-  return input
-    .replace(/[۰-۹]/g, (d) => String(PERSIAN_DIGITS.indexOf(d)))
-    .replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d)));
-}
-
-/** Turns Persian/Arabic digits into ASCII and drops spaces and dashes: "۶۰۳۷-۹۹..." → "603799...". */
-export function normalizeCardNumber(input: string): string {
-  return toAsciiDigits(input).replace(/[\s-]/g, "");
-}
+export { normalizeCardNumber } from "@/lib/card";
 
 /**
  * Profit percent typed by staff → basis points (1% = 100 bp). Integer math only, no floats.
@@ -51,14 +39,20 @@ export const profitPercentSchema = z
 export const newWarehouseSchema = z.object({
   name: z.string().trim().min(2, "نام انبار حداقل ۲ حرف است"),
   ownerName: z.string().trim().min(2, "نام صاحب انبار حداقل ۲ حرف است"),
-  cardNumber: z
-    .string()
-    .transform(normalizeCardNumber)
-    .pipe(z.string().regex(/^\d{16}$/, "شماره کارت باید ۱۶ رقم باشد")),
+  cardNumber: cardNumberSchema,
+  // The name on the card: shown to shoppers who pay by card-to-card. Not always the owner.
+  cardHolder: cardHolderSchema,
   profitBp: profitPercentSchema,
 });
 
 export type NewWarehouse = z.infer<typeof newWarehouseSchema>;
+
+/** The manager corrects a warehouse's card (number and the name on it). */
+export const setCardSchema = z.object({
+  id: z.uuid(),
+  cardNumber: cardNumberSchema,
+  cardHolder: cardHolderSchema,
+});
 
 export const setProfitSchema = z.object({
   id: z.uuid(),

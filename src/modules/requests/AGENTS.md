@@ -31,6 +31,24 @@ Rules:
   blanks it. A row with no purchase price (a free row) gets its profit typed by staff
   (`manual_profit_toman`, used only when the purchase price is unknown). Confirmation needs every remaining row priced. Deadline:
   staff hours, default 12, max 168.
+- Payment and order (#19, card-to-card): after «قبول» the request is an order. accepted = «منتظر پرداخت» →
+  payment_sent (the shopper first picks the delivery method once — `setDelivery`, saved on pick, changeable
+  until paid; then the form: tracking, last 4 digits, Persian date of the last 7 days + hour and minute
+  in Tehran, optional receipt photo uploaded on pick, ≤ 10 MB; empty boxes blink red; with several cards the
+  amount is checked while typed (`rules.amountProblem`) and kept in the browser until sent) → paid → collecting → shipped (tracking code for Tipax / post, saves by itself while typed);
+  refunded after payment (reason only). Staff buttons are light red until done, then green. Several cards: each form has its amount; staff answer each form by id and
+  `rules.statusAfterPayments` sets the status (paid when confirmed forms cover the total). «پرداخت با»
+  shows the gateway amount with `settings.getGatewayTaxPercent` (default 10%), «به‌زودی» until #20.
+  «پرداخت پیدا نشد» (+reason) on a form sends the order back to accepted if nothing else waits. Accepted with no payment form past the
+  deadline = expired; the first form (`payment_form_at`) stops the deadline, «ویرایش فاکتور» and payee changes.
+  Payee card: suggested at confirm (`rules.defaultPayee`, the warehouse with the largest share, its
+  `card_holder`), staff may change it until a form arrives. Every form is a `requests_payments` row,
+  kept for accounting (amount at send time, payee, who decided). Receipts live in `UPLOAD_DIR/receipts`,
+  served only to staff at `/admin/receipts/<file>` (never public, never cached). Shipping is پس‌کرایه.
+- Refunds (`requests_refunds`): staff record each money transfer back (amount, tracking, optional receipt
+  photo), partial or after «لغو و برگشت پول»; the sum never exceeds the confirmed payments
+  (`rules.refundable`). The shopper sees them; refund receipts are served at
+  `/requests/refund-receipts/<file>` to staff and to that request's shopper only.
 - History (#9): `requests_history` — who confirmed, rejected, reopened or edited (row edits, add row,
   invoice discount; one `edit` line per person per request, its time moves forward). Shown as
   «تاریخچه» under the invoice and «آخرین رسیدگی» in the list. Every staff action passes the signed-in
