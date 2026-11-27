@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { groupFa } from "@/lib/money";
-import { Input } from "@/components/ui/input";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { DEFAULT_SHOP_PAGE_SIZE, isUuid, normalizeCode, shopPageSize, type Unit } from "../rules";
@@ -11,6 +10,7 @@ import {
   listOtherModels,
   searchProducts,
 } from "../service";
+import { LiveSearchInput } from "./live-search-input";
 import { categoryOptions, selectClass } from "./options";
 import { PageSizeSelect } from "./page-size-select";
 import { Pager } from "./pager";
@@ -72,7 +72,7 @@ export async function ShopSearch({ searchParams, action }: { searchParams: Searc
     <div className="flex flex-col gap-5">
       <form action="/" className="flex flex-col gap-2">
         <div className="flex gap-2">
-          <Input
+          <LiveSearchInput
             name="q"
             type="search"
             defaultValue={s.q}

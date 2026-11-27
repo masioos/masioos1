@@ -10,6 +10,7 @@ import { formatProfitPercent } from "../rules";
 import { listWarehouses } from "../service";
 import { CardForm } from "./card-form";
 import { ProfitForm } from "./profit-form";
+import { SheetModeSelect } from "./sheet-mode-select";
 
 // Server Component: reads the list straight from the service.
 export async function WarehouseTable() {
@@ -24,6 +25,7 @@ export async function WarehouseTable() {
           <TableHead>صاحب انبار</TableHead>
           <TableHead>شماره کارت و نام صاحب کارت</TableHead>
           <TableHead>درصد سود</TableHead>
+          <TableHead>فایل اکسل موجودی</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -36,6 +38,9 @@ export async function WarehouseTable() {
             </TableCell>
             <TableCell>
               <ProfitForm id={w.id} percent={formatProfitPercent(w.profitBp)} />
+            </TableCell>
+            <TableCell>
+              <SheetModeSelect id={w.id} mode={w.sheetMode} />
             </TableCell>
           </TableRow>
         ))}

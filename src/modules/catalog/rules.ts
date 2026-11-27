@@ -292,3 +292,116 @@ export function unitPriceLabel(unit: Unit): string {
 export function maxQuantity(unit: Unit): number {
   return unit === "pair" ? 2 : 4;
 }
+
+// ── Stock sheet: what an import changes (#2) ───────────────────────────────────────────
+
+/** Per warehouse (set in «انبارها»): the sheet changes stock and prices, or only stock. */
+export type SheetMode = "stock_and_price" | "stock_only";
+
+/** A good already in the shop with one of the sheet's codes, or of the importing warehouse. */
+export type ExistingGood = {
+  id: string;
+  code: string;
+  name: string;
+  warehouseId: string;
+  purchasePriceToman: number | null;
+  fromSheet: boolean;
+  isUnavailable: boolean;
+  unavailableSource: "hand" | "sheet" | null;
+};
+
+/** One purchase-price change from a sheet, shown to the manager (old → new). */
+export type PriceChange = { id: string; code: string; name: string; oldToman: number | null; purchaseToman: number | null };
+
+/**
+ * How much a price moved: Toman (new − old) and percent of the old price, one decimal
+ * (null when there was no old price or it was 0, or there is no new price).
+ */
+export function priceMove(oldToman: number | null, newToman: number | null): { amount: number | null; percent: number | null } {
+  if (oldToman === null || newToman === null) return { amount: null, percent: null };
+  const amount = newToman - oldToman;
+  return { amount, percent: oldToman === 0 ? null : Math.round((amount * 1000) / oldToman) / 10 };
+}
+
+export type StockImportPlan = {
+  /** Codes not in the shop yet: shown to the manager with a tick each. */
+  newRows: StockRow[];
+  /** The ticked new rows, with the price they get (none in «فقط موجودی»). */
+  create: StockRow[];
+  /** Goods of this warehouse found in the sheet (car links, «from sheet»). */
+  matched: { id: string; row: StockRow }[];
+  priceUpdates: PriceChange[];
+  makeAvailable: { id: string; code: string; name: string }[];
+  makeUnavailable: { id: string; code: string; name: string }[];
+  skipped: StockRowError[];
+  /** More than half of this warehouse's sheet goods would go «ناموجود»: ask «مطمئنی؟» first. */
+  needsConfirm: boolean;
+};
+
+/**
+ * Every code the supplier still lists: the good rows, plus rows rejected only for their name or
+ * price (a row whose code itself is empty or wrong names no product).
+ */
+export function sheetCodes(rows: readonly StockRow[], rejected: readonly StockRowError[]): Set<string> {
+  const codes = new Set(rows.map((r) => r.code));
+  for (const e of rejected) if (e.code && isValidCode(e.code)) codes.add(e.code);
+  return codes;
+}
+
+/**
+ * What importing a stock sheet into one warehouse changes. Pure; the service writes it.
+ * - A new code is created only when ticked (`selectedNew`); «فقط موجودی» creates it without price.
+ * - A code of another warehouse is skipped.
+ * - A good of this warehouse in the sheet: price updated (only «موجودی و قیمت»), available again
+ *   if a sheet had made it «ناموجود» (never if staff did, by hand).
+ * - A good of this warehouse that came from a sheet and is missing now → «ناموجود» (sheet).
+ *   Goods made by hand and never in a sheet are left alone.
+ */
+export function planStockImport(input: {
+  warehouseId: string;
+  mode: SheetMode;
+  rows: readonly StockRow[];
+  existing: readonly ExistingGood[];
+  selectedNew: ReadonlySet<string>;
+  /** Codes rejected for another reason (bad name or price): still in the sheet, never «ناموجود». */
+  rejected?: readonly StockRowError[];
+}): StockImportPlan {
+  const { warehouseId, mode, rows, existing, selectedNew } = input;
+  const byCode = new Map(existing.map((g) => [g.code, g]));
+  const inSheet = sheetCodes(rows, input.rejected ?? []);
+  const plan: StockImportPlan = {
+    newRows: [],
+    create: [],
+    matched: [],
+    priceUpdates: [],
+    makeAvailable: [],
+    makeUnavailable: [],
+    skipped: [],
+    needsConfirm: false,
+  };
+
+  for (const r of rows) {
+    const g = byCode.get(r.code);
+    if (!g) {
+      plan.newRows.push(r);
+      if (selectedNew.has(r.code)) plan.create.push(mode === "stock_only" ? { ...r, purchaseToman: null } : r);
+      continue;
+    }
+    if (g.warehouseId !== warehouseId) {
+      plan.skipped.push({ row: r.row, code: r.code, reason: "این کد در انبار دیگری ثبت شده است" });
+      continue;
+    }
+    plan.matched.push({ id: g.id, row: r });
+    if (mode === "stock_and_price" && g.purchasePriceToman !== r.purchaseToman) {
+      plan.priceUpdates.push({ id: g.id, code: g.code, name: g.name, oldToman: g.purchasePriceToman, purchaseToman: r.purchaseToman });
+    }
+    if (g.isUnavailable && g.unavailableSource === "sheet") plan.makeAvailable.push({ id: g.id, code: g.code, name: g.name });
+  }
+
+  const sheetGoods = existing.filter((g) => g.warehouseId === warehouseId && g.fromSheet);
+  for (const g of sheetGoods) {
+    if (!inSheet.has(g.code) && !g.isUnavailable) plan.makeUnavailable.push({ id: g.id, code: g.code, name: g.name });
+  }
+  plan.needsConfirm = sheetGoods.length > 0 && plan.makeUnavailable.length > sheetGoods.length / 2;
+  return plan;
+}

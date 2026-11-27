@@ -75,6 +75,12 @@ export const catalogProducts = pgTable(
     purchasePriceToman: bigint("purchase_price_toman", { mode: "number" }),
     isActive: boolean("is_active").notNull().default(true),
     isUnavailable: boolean("is_unavailable").notNull().default(false),
+    // Who made it «ناموجود» (#2): staff by hand, or a stock sheet it was missing from. A later
+    // sheet makes only "sheet" goods available again. null while available.
+    unavailableSource: text("unavailable_source", { enum: ["hand", "sheet"] }),
+    // An Excel stock sheet created it or had its code (#2). Only these goods go «ناموجود» when
+    // missing from a later sheet; goods made by hand and never in a sheet are left alone.
+    fromSheet: boolean("from_sheet").notNull().default(false),
     // Sold per piece (عدد) or per pair (جفت). Prices are per unit.
     unit: text("unit", { enum: ["piece", "pair"] }).notNull().default("piece"),
     // normalizeSearch(name + code + brand). Written by the app on every save, so search is one ILIKE.

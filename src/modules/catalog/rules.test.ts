@@ -12,6 +12,9 @@ import {
   normalizeCode,
   normalizeSearch,
   parseStockSheetRows,
+  planStockImport,
+  priceMove,
+  type ExistingGood,
   productFormSchema,
   rialToToman,
   searchWords,
@@ -247,5 +250,113 @@ describe("unit", () => {
     const base = { warehouseId: "6f1c1f3e-8a1b-4c2d-9e3f-0a1b2c3d4e5f", code: "X1", name: "قطعه" };
     expect(productFormSchema.parse(base).unit).toBe("piece");
     expect(productFormSchema.safeParse({ ...base, unit: "box" }).success).toBe(false);
+  });
+});
+
+describe("planStockImport (#2)", () => {
+  const W = "w-1";
+  const row = (code: string, purchaseToman: number | null = 1000) => ({ row: 5, code, name: `کالا ${code}`, car: null, purchaseToman });
+  const good = (code: string, extra: Partial<ExistingGood> = {}): ExistingGood => ({
+    id: `id-${code}`,
+    code,
+    name: `کالا ${code}`,
+    warehouseId: W,
+    purchasePriceToman: 1000,
+    fromSheet: true,
+    isUnavailable: false,
+    unavailableSource: null,
+    ...extra,
+  });
+  const plan = (rows: ReturnType<typeof row>[], existing: ExistingGood[], opts: { mode?: "stock_and_price" | "stock_only"; selected?: string[] } = {}) =>
+    planStockImport({ warehouseId: W, mode: opts.mode ?? "stock_and_price", rows, existing, selectedNew: new Set(opts.selected ?? []) });
+
+  it("a sheet good missing from the sheet goes «ناموجود»", () => {
+    const p = plan([row("1"), row("2")], [good("1"), good("2"), good("3")]);
+    expect(p.makeUnavailable.map((g) => g.code)).toEqual(["3"]);
+  });
+  it("a good the sheet made «ناموجود» is available again when the sheet has it", () => {
+    const p = plan([row("1")], [good("1", { isUnavailable: true, unavailableSource: "sheet" })]);
+    expect(p.makeAvailable.map((g) => g.code)).toEqual(["1"]);
+  });
+  it("a good made «ناموجود» by hand stays so, even if the sheet has it", () => {
+    const p = plan([row("1")], [good("1", { isUnavailable: true, unavailableSource: "hand" })]);
+    expect(p.makeAvailable).toEqual([]);
+  });
+  it("a good made by hand (never in a sheet) is left alone when missing", () => {
+    const p = plan([row("1")], [good("1"), good("9", { fromSheet: false })]);
+    expect(p.makeUnavailable).toEqual([]);
+  });
+  it("«فقط موجودی» never changes a price and creates new goods without price", () => {
+    const p = plan([row("1", 5000), row("2", 7000)], [good("1")], { mode: "stock_only", selected: ["2"] });
+    expect(p.priceUpdates).toEqual([]);
+    expect(p.create).toEqual([{ ...row("2", 7000), purchaseToman: null }]);
+  });
+  it("«موجودی و قیمت» updates a changed price and creates new goods with the sheet price", () => {
+    const p = plan([row("1", 5000), row("2", 7000), row("3", 1000)], [good("1"), good("3")], { selected: ["2"] });
+    expect(p.priceUpdates).toEqual([{ id: "id-1", code: "1", name: "کالا 1", oldToman: 1000, purchaseToman: 5000 }]);
+    expect(p.create).toEqual([row("2", 7000)]);
+  });
+  it("a new code is listed, and created only when ticked", () => {
+    const p = plan([row("2"), row("3")], [], { selected: ["3"] });
+    expect(p.newRows.map((r) => r.code)).toEqual(["2", "3"]);
+    expect(p.create.map((r) => r.code)).toEqual(["3"]);
+  });
+  it("a code of another warehouse is skipped", () => {
+    const p = plan([row("1")], [good("1", { warehouseId: "w-2" })]);
+    expect(p.skipped).toHaveLength(1);
+    expect(p.matched).toEqual([]);
+  });
+  it("asks first when more than half of the sheet goods would go «ناموجود»; exactly half does not", () => {
+    expect(plan([row("1")], [good("1"), good("2"), good("3")]).needsConfirm).toBe(true);
+    expect(plan([row("1"), row("2")], [good("1"), good("2"), good("3"), good("4")]).needsConfirm).toBe(false);
+    expect(plan([], [good("1", { fromSheet: false })]).needsConfirm).toBe(false);
+  });
+});
+
+describe("priceMove", () => {
+  it("gives the change in Toman and in percent of the old price, one decimal", () => {
+    expect(priceMove(100_000, 110_000)).toEqual({ amount: 10_000, percent: 10 });
+    expect(priceMove(300_000, 200_000)).toEqual({ amount: -100_000, percent: -33.3 });
+  });
+  it("has no amount or percent without both prices; no percent from 0", () => {
+    expect(priceMove(null, 5000)).toEqual({ amount: null, percent: null });
+    expect(priceMove(5000, null)).toEqual({ amount: null, percent: null });
+    expect(priceMove(0, 5000)).toEqual({ amount: 5000, percent: null });
+  });
+});
+
+describe("planStockImport with rejected rows", () => {
+  const good: ExistingGood = {
+    id: "id-1",
+    code: "111",
+    name: "کالا",
+    warehouseId: "w-1",
+    purchasePriceToman: 1000,
+    fromSheet: true,
+    isUnavailable: false,
+    unavailableSource: null,
+  };
+  it("a sheet good whose row has a bad price is still in the sheet, not «ناموجود»", () => {
+    const p = planStockImport({
+      warehouseId: "w-1",
+      mode: "stock_and_price",
+      rows: [],
+      existing: [good],
+      selectedNew: new Set(),
+      rejected: [{ row: 5, code: "111", reason: "قیمت نامعتبر است" }],
+    });
+    expect(p.makeUnavailable).toEqual([]);
+    expect(p.needsConfirm).toBe(false);
+  });
+  it("a row with an empty code does not keep anything in the sheet", () => {
+    const p = planStockImport({
+      warehouseId: "w-1",
+      mode: "stock_and_price",
+      rows: [],
+      existing: [good],
+      selectedNew: new Set(),
+      rejected: [{ row: 5, code: "", reason: "کد فنی خالی است" }],
+    });
+    expect(p.makeUnavailable.map((g) => g.code)).toEqual(["111"]);
   });
 });

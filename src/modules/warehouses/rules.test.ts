@@ -4,6 +4,7 @@ import {
   newWarehouseSchema,
   normalizeCardNumber,
   parseProfitPercent,
+  setSheetModeSchema,
 } from "./rules";
 
 describe("normalizeCardNumber", () => {
@@ -67,5 +68,14 @@ describe("formatProfitPercent", () => {
     expect(formatProfitPercent(1000)).toBe("10");
     expect(formatProfitPercent(1250)).toBe("12.5");
     expect(formatProfitPercent(25)).toBe("0.25");
+  });
+});
+
+describe("setSheetModeSchema", () => {
+  const id = "6f1c2c1e-8a4b-4c55-9d7e-1a2b3c4d5e6f";
+  it("accepts only «موجودی و قیمت» and «فقط موجودی»", () => {
+    expect(setSheetModeSchema.safeParse({ id, sheetMode: "stock_and_price" }).success).toBe(true);
+    expect(setSheetModeSchema.safeParse({ id, sheetMode: "stock_only" }).success).toBe(true);
+    expect(setSheetModeSchema.safeParse({ id, sheetMode: "price_only" }).success).toBe(false);
   });
 });

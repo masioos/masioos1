@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { newWarehouseSchema, setCardSchema, setProfitSchema } from "./rules";
-import { createWarehouse, setWarehouseCard, setWarehouseProfit } from "./service";
+import { newWarehouseSchema, setCardSchema, setProfitSchema, setSheetModeSchema } from "./rules";
+import { createWarehouse, setWarehouseCard, setWarehouseProfit, setWarehouseSheetMode } from "./service";
 import { requireManager } from "@/modules/staff";
 
 export type CreateWarehouseState = { error?: string; ok?: boolean };
@@ -43,4 +43,14 @@ export async function setWarehouseProfitAction(
   await setWarehouseProfit(parsed.data.id, parsed.data.profitBp);
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/** «فایل اکسل»: stock and prices, or only stock (#2). Saves as soon as it is picked. */
+export async function setSheetModeAction(formData: FormData): Promise<{ error?: string }> {
+  await requireManager();
+  const parsed = setSheetModeSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  await setWarehouseSheetMode(parsed.data.id, parsed.data.sheetMode);
+  revalidatePath("/admin/warehouses");
+  return {};
 }

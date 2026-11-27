@@ -15,6 +15,10 @@ One word, one meaning. Use these words in code, issues and chat. Persian in brac
 | **Active** (فعال) | A product the shop shows. Inactive products are hidden everywhere in the shop. |
 | **Unavailable** (ناموجود) | A product shown with the «ناموجود» label; it cannot go in the cart. |
 | **Stock sheet** (فایل موجودی) | A supplier's Excel list (e.g. `Mojoodi_4104070_*.xlsx`): code, name, car, price in Rial. |
+| **Price source** (منبع قیمت) | Where a warehouse's purchase prices come from: by hand, its stock sheet, or «ایساکو» (ISACO's full Excel price file, «قیمت خرده‌فروشی»). |
+| **Price history** (تاریخچه‌ی قیمت) | Every purchase-price change of a product, with time and source. |
+| **Stock only** (فقط موجودی) | A warehouse setting: its stock sheet changes only what is available; prices come from elsewhere. The other value is «موجودی و قیمت». |
+| **Sheet-unavailable** | A good the stock sheet made «ناموجود» because it was missing; a later sheet that has it makes it available again. Goods made unavailable by hand are not. |
 | **Price list** (لیست قیمت) | Where a warehouse's prices come from: typed by hand, an uploaded PDF, or an online feed. |
 | **Cart** (سبد خرید) | Goods a shopper picked. Not an order yet. |
 | **Wish note / Cart note** (توضیحات سبد) | Free text in the cart: goods not in the shop, or more than the quantity limit. Saved by itself while typed. Can be sent with an empty cart. Staff see it as «تیکت». |
