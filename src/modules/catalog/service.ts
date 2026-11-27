@@ -5,6 +5,8 @@ import path from "node:path";
 import { and, asc, count, desc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db/client";
 import { env } from "@/env";
+import { getIsacoWarehouseId, setIsacoWarehouseId } from "@/modules/settings";
+import { getStaffNames } from "@/modules/staff";
 import { getWarehouseProfits, listWarehouses } from "@/modules/warehouses";
 import {
   buildSearchText,
@@ -14,7 +16,10 @@ import {
   MAX_PHOTOS_PER_PRODUCT,
   normalizeCode,
   PHOTO_CONTENT_TYPES,
+  planIsacoPrices,
   planStockImport,
+  waitingToApply,
+  sheetModeFor,
   type ExistingGood,
   type SheetMode,
   type StockImportPlan,
@@ -32,7 +37,10 @@ import {
   catalogCars,
   catalogCategories,
   catalogCountries,
+  catalogIsacoRuns,
+  catalogIsacoWaiting,
   catalogPartGroups,
+  catalogPriceHistory,
   catalogProductCars,
   catalogProductPhotos,
   catalogProducts,
@@ -179,7 +187,7 @@ function productValues(input: ProductInput, brand: string | null) {
 
 const DUPLICATE_CODE = "این کد فنی قبلاً ثبت شده است";
 
-export async function createProduct(input: ProductInput): Promise<Result<{ id: string }>> {
+export async function createProduct(input: ProductInput, staffId: string): Promise<Result<{ id: string }>> {
   const brand = await brandName(input.brandId);
   try {
     const id = await db.transaction(async (tx) => {
@@ -187,6 +195,7 @@ export async function createProduct(input: ProductInput): Promise<Result<{ id: s
         .insert(catalogProducts)
         .values(productValues(input, brand))
         .returning({ id: catalogProducts.id });
+      await recordPriceChanges(tx, [{ productId: row.id, oldToman: null, newToman: input.purchasePriceToman }], "hand", staffId);
       if (input.carIds.length > 0) {
         await tx.insert(catalogProductCars).values(input.carIds.map((carId) => ({ productId: row.id, carId })));
       }
@@ -200,16 +209,38 @@ export async function createProduct(input: ProductInput): Promise<Result<{ id: s
   }
 }
 
-export async function updateProduct(id: string, input: ProductInput): Promise<Result> {
+/** Price history (#8): one line per real purchase-price change. */
+export type PriceSource = "hand" | "sheet" | "isaco";
+
+async function recordPriceChanges(
+  tx: Pick<typeof db, "insert">,
+  changes: readonly { productId: string; oldToman: number | null; newToman: number | null }[],
+  source: PriceSource,
+  staffId: string | null,
+) {
+  const real = changes.filter((c) => c.oldToman !== c.newToman);
+  for (let i = 0; i < real.length; i += 1000) {
+    await tx.insert(catalogPriceHistory).values(real.slice(i, i + 1000).map((c) => ({ ...c, source, staffId })));
+  }
+}
+
+export async function updateProduct(id: string, input: ProductInput, staffId: string): Promise<Result> {
   const brand = await brandName(input.brandId);
   try {
     const found = await db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({ price: catalogProducts.purchasePriceToman })
+        .from(catalogProducts)
+        .where(eq(catalogProducts.id, id))
+        .for("update");
+      if (!before) return false;
       const updated = await tx
         .update(catalogProducts)
         .set({ ...productValues(input, brand), updatedAt: new Date() })
         .where(eq(catalogProducts.id, id))
         .returning({ id: catalogProducts.id });
       if (updated.length === 0) return false;
+      await recordPriceChanges(tx, [{ productId: id, oldToman: before.price, newToman: input.purchasePriceToman }], "hand", staffId);
       await tx.delete(catalogProductCars).where(eq(catalogProductCars.productId, id));
       if (input.carIds.length > 0) {
         await tx.insert(catalogProductCars).values(input.carIds.map((carId) => ({ productId: id, carId })));
@@ -448,8 +479,9 @@ export async function warehouseExists(id: string): Promise<boolean> {
 }
 
 async function warehouseOf(id: string): Promise<{ name: string; mode: SheetMode } | null> {
-  const w = (await listWarehouses()).find((x) => x.id === id);
-  return w ? { name: w.name, mode: w.sheetMode } : null;
+  const [list, isacoId] = await Promise.all([listWarehouses(), getIsacoWarehouseId()]);
+  const w = list.find((x) => x.id === id);
+  return w ? { name: w.name, mode: sheetModeFor(w.id, isacoId) } : null;
 }
 
 type Reader = Pick<typeof db, "select">;
@@ -511,7 +543,7 @@ const CONFIRM_NEEDED = "بیشتر از نصف کالاهای این انبار 
 export async function importStockSheet(
   warehouseId: string,
   rows: StockRow[],
-  opts: { selectedNew: ReadonlySet<string>; confirmed: boolean; rejected: StockRowError[]; previewMode: SheetMode },
+  opts: { selectedNew: ReadonlySet<string>; confirmed: boolean; rejected: StockRowError[]; previewMode: SheetMode; staffId: string },
 ): Promise<{ ok: true; report: ImportReport } | { ok: false; error: string }> {
   const w = await warehouseOf(warehouseId);
   if (!w) return { ok: false, error: "انبار پیدا نشد" };
@@ -541,6 +573,12 @@ export async function importStockSheet(
     for (const u of plan.priceUpdates) {
       await tx.update(catalogProducts).set({ purchasePriceToman: u.purchaseToman, updatedAt: now }).where(eq(catalogProducts.id, u.id));
     }
+    await recordPriceChanges(
+      tx,
+      plan.priceUpdates.map((u) => ({ productId: u.id, oldToman: u.oldToman, newToman: u.purchaseToman })),
+      "sheet",
+      opts.staffId,
+    );
     const ids = (list: { id: string }[]) => list.map((x) => x.id);
     for (let i = 0; i < plan.matched.length; i += 1000) {
       const chunk = plan.matched.slice(i, i + 1000);
@@ -578,6 +616,12 @@ export async function importStockSheet(
         .returning({ id: catalogProducts.id, code: catalogProducts.code });
       const rowByCode = new Map(chunk.map((r) => [r.code, r]));
       for (const p of rowsMade) link(p.id, rowByCode.get(p.code)?.car ?? null);
+      await recordPriceChanges(
+        tx,
+        rowsMade.map((p) => ({ productId: p.id, oldToman: null, newToman: rowByCode.get(p.code)?.purchaseToman ?? null })),
+        "sheet",
+        opts.staffId,
+      );
       created += rowsMade.length;
     }
 
@@ -847,4 +891,167 @@ export async function getPurchasePrices(ids: readonly string[]): Promise<Map<str
     .from(catalogProducts)
     .where(inArray(catalogProducts.id, [...new Set(ids)]));
   return new Map(rows.map((r) => [r.id, r.purchase]));
+}
+
+// ── ISACO prices (#8) ──────────────────────────────────────────────────────────────────
+
+export type IsacoRun = typeof catalogIsacoRuns.$inferSelect & { staffName: string };
+export type IsacoWaitingRow = { code: string; name: string; oldToman: number | null; newToman: number };
+
+/** The newest upload of ISACO's file, or null. */
+export async function lastIsacoRun(): Promise<IsacoRun | null> {
+  const [run] = await db.select().from(catalogIsacoRuns).orderBy(desc(catalogIsacoRuns.at)).limit(1);
+  if (!run) return null;
+  const names = await getStaffNames(run.staffId ? [run.staffId] : []);
+  return { ...run, staffName: run.staffId ? (names.get(run.staffId) ?? "") : "" };
+}
+
+/** The big jumps of a run still waiting for «تأیید». */
+export async function isacoWaiting(runId: string): Promise<IsacoWaitingRow[]> {
+  return db
+    .select({
+      code: catalogProducts.code,
+      name: catalogProducts.name,
+      oldToman: catalogIsacoWaiting.oldToman,
+      newToman: catalogIsacoWaiting.newToman,
+    })
+    .from(catalogIsacoWaiting)
+    .innerJoin(catalogProducts, eq(catalogProducts.id, catalogIsacoWaiting.productId))
+    .where(eq(catalogIsacoWaiting.runId, runId))
+    .orderBy(asc(catalogProducts.code));
+}
+
+export type IsacoReport = {
+  fileRows: number;
+  badRows: number;
+  changed: IsacoWaitingRow[];
+  unchanged: number;
+  missing: number;
+  noPrice: number;
+  waiting: IsacoWaitingRow[];
+};
+
+const NO_ISACO_WAREHOUSE = "اول انبار ایساکو را انتخاب کنید.";
+
+/**
+ * One upload of ISACO's file: the purchase prices of the ISACO warehouse's goods (one transaction).
+ * Big jumps wait (when there are more than 50); older waiting rows are dropped (their file is old).
+ */
+export async function importIsacoPrices(
+  staffId: string,
+  sheet: { prices: Map<string, number | null>; fileRows: number; badRows: number },
+): Promise<{ ok: true; report: IsacoReport } | { ok: false; error: string }> {
+  const warehouseId = await getIsacoWarehouseId();
+  if (!warehouseId || !(await warehouseExists(warehouseId))) return { ok: false, error: NO_ISACO_WAREHOUSE };
+
+  return db.transaction(async (tx) => {
+    const goods = await tx
+      .select({
+        id: catalogProducts.id,
+        code: catalogProducts.code,
+        name: catalogProducts.name,
+        warehouseId: catalogProducts.warehouseId,
+        purchasePriceToman: catalogProducts.purchasePriceToman,
+      })
+      .from(catalogProducts)
+      .where(eq(catalogProducts.warehouseId, warehouseId))
+      .for("update");
+    const plan = planIsacoPrices(warehouseId, goods, sheet.prices);
+    const now = new Date();
+    for (const c of plan.apply) {
+      await tx.update(catalogProducts).set({ purchasePriceToman: c.newToman, updatedAt: now }).where(eq(catalogProducts.id, c.id));
+    }
+    await recordPriceChanges(
+      tx,
+      plan.apply.map((c) => ({ productId: c.id, oldToman: c.oldToman, newToman: c.newToman })),
+      "isaco",
+      staffId,
+    );
+    await tx.delete(catalogIsacoWaiting);
+    const [run] = await tx
+      .insert(catalogIsacoRuns)
+      .values({
+        staffId,
+        fileRows: sheet.fileRows,
+        changed: plan.apply.length,
+        unchanged: plan.unchanged,
+        missing: plan.missing,
+        noPrice: plan.noPrice,
+        waiting: plan.waiting.length,
+      })
+      .returning({ id: catalogIsacoRuns.id });
+    for (let i = 0; i < plan.waiting.length; i += 1000) {
+      await tx.insert(catalogIsacoWaiting).values(
+        plan.waiting.slice(i, i + 1000).map((c) => ({ runId: run.id, productId: c.id, oldToman: c.oldToman, newToman: c.newToman })),
+      );
+    }
+    const row = ({ code, name, oldToman, newToman }: IsacoWaitingRow) => ({ code, name, oldToman, newToman });
+    return {
+      ok: true as const,
+      report: {
+        fileRows: sheet.fileRows,
+        badRows: sheet.badRows,
+        changed: plan.apply.map(row),
+        unchanged: plan.unchanged,
+        missing: plan.missing,
+        noPrice: plan.noPrice,
+        waiting: plan.waiting.map(row),
+      },
+    };
+  });
+}
+
+/**
+ * «تأیید تغییرهای بزرگ»: applies the waiting jumps of the newest run. A good whose price changed
+ * since (by hand or another file) keeps that price.
+ */
+export async function approveIsacoWaiting(staffId: string, runId: string): Promise<Result> {
+  return db.transaction(async (tx) => {
+    const [newest] = await tx.select({ id: catalogIsacoRuns.id }).from(catalogIsacoRuns).orderBy(desc(catalogIsacoRuns.at)).limit(1);
+    if (!newest || newest.id !== runId) return { ok: false, error: "فایل تازه‌تری آمده است. صفحه را دوباره باز کنید." };
+    const waiting = await tx.select().from(catalogIsacoWaiting).where(eq(catalogIsacoWaiting.runId, runId));
+    const isacoId = await getIsacoWarehouseId();
+    const goods = waiting.length
+      ? await tx
+          .select({ id: catalogProducts.id, warehouseId: catalogProducts.warehouseId, purchasePriceToman: catalogProducts.purchasePriceToman })
+          .from(catalogProducts)
+          .where(inArray(catalogProducts.id, waiting.map((w) => w.productId)))
+          .for("update")
+      : [];
+    const applied = waitingToApply(waiting, new Map(goods.map((g) => [g.id, g])), isacoId);
+    const now = new Date();
+    for (const w of applied) {
+      await tx.update(catalogProducts).set({ purchasePriceToman: w.newToman, updatedAt: now }).where(eq(catalogProducts.id, w.productId));
+    }
+    await recordPriceChanges(tx, applied, "isaco", staffId);
+    await tx.delete(catalogIsacoWaiting).where(eq(catalogIsacoWaiting.runId, runId));
+    await tx.update(catalogIsacoRuns).set({ approvedAt: now }).where(eq(catalogIsacoRuns.id, runId));
+    return { ok: true };
+  });
+}
+
+/** «تاریخچه‌ی قیمت خرید» of one product, newest first. */
+export async function priceHistory(productId: string) {
+  const rows = await db
+    .select()
+    .from(catalogPriceHistory)
+    .where(eq(catalogPriceHistory.productId, productId))
+    .orderBy(desc(catalogPriceHistory.at))
+    .limit(200);
+  const names = await getStaffNames(rows.flatMap((r) => (r.staffId ? [r.staffId] : [])));
+  return rows.map((r) => ({ ...r, staffName: r.staffId ? (names.get(r.staffId) ?? "") : "" }));
+}
+
+/** The ISACO warehouse and the warehouses to choose it from («قیمت ایساکو» page). */
+export async function isacoWarehouseChoice() {
+  const [current, list] = await Promise.all([getIsacoWarehouseId(), listWarehouses()]);
+  return { current: list.some((w) => w.id === current) ? current : null, warehouses: list.map((w) => ({ id: w.id, name: w.name })) };
+}
+
+export async function chooseIsacoWarehouse(warehouseId: string): Promise<Result> {
+  if (!(await warehouseExists(warehouseId))) return { ok: false, error: "انبار پیدا نشد" };
+  await setIsacoWarehouseId(warehouseId);
+  // Waiting big jumps were for the old ISACO warehouse's goods: they no longer apply.
+  await db.delete(catalogIsacoWaiting);
+  return { ok: true };
 }

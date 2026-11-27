@@ -295,8 +295,16 @@ export function maxQuantity(unit: Unit): number {
 
 // ── Stock sheet: what an import changes (#2) ───────────────────────────────────────────
 
-/** Per warehouse (set in «انبارها»): the sheet changes stock and prices, or only stock. */
+/** What a stock sheet changes: stock and prices, or only stock. */
 export type SheetMode = "stock_and_price" | "stock_only";
+
+/**
+ * The ISACO warehouse takes its prices from ISACO's price file (#8), so its stock sheet changes
+ * only stock; every other warehouse's sheet changes stock and prices.
+ */
+export function sheetModeFor(warehouseId: string, isacoWarehouseId: string | null): SheetMode {
+  return warehouseId === isacoWarehouseId ? "stock_only" : "stock_and_price";
+}
 
 /** A good already in the shop with one of the sheet's codes, or of the importing warehouse. */
 export type ExistingGood = {
@@ -404,4 +412,123 @@ export function planStockImport(input: {
   }
   plan.needsConfirm = sheetGoods.length > 0 && plan.makeUnavailable.length > sheetGoods.length / 2;
   return plan;
+}
+
+// ── ISACO price file (#8) ──────────────────────────────────────────────────────────────
+
+export const ISACO_HEADERS = { code: "کد تدارکاتی", price: "قیمت خرده فروشی" } as const;
+
+export type IsacoSheet =
+  | { ok: true; prices: Map<string, number | null>; fileRows: number; badRows: number }
+  | { ok: false; error: string };
+
+/**
+ * Reads ISACO's full price file: a header row with «کد تدارکاتی» and «قیمت خرده فروشی» (any order,
+ * other columns ignored), then one row per part. Prices are Rial → Toman; 0 or empty → null (no
+ * price). Rows with a bad code or price are counted, not fatal.
+ */
+export function parseIsacoSheet(rows: readonly (readonly unknown[])[]): IsacoSheet {
+  const want = { code: headerKey(ISACO_HEADERS.code), price: headerKey(ISACO_HEADERS.price) };
+  const headerIndex = rows.findIndex((r) => {
+    const keys = r.map(headerKey);
+    return keys.includes(want.code) && keys.includes(want.price);
+  });
+  if (headerIndex === -1) {
+    return { ok: false, error: `ستون‌های «${ISACO_HEADERS.code}» و «${ISACO_HEADERS.price}» در فایل پیدا نشد.` };
+  }
+  const keys = rows[headerIndex].map(headerKey);
+  const codeCol = keys.indexOf(want.code);
+  const priceCol = keys.indexOf(want.price);
+  const prices = new Map<string, number | null>();
+  let fileRows = 0;
+  let badRows = 0;
+  for (const r of rows.slice(headerIndex + 1)) {
+    if (r.every((c) => cellText(c) === "")) continue;
+    fileRows++;
+    const code = normalizeCode(cellText(r[codeCol]));
+    const rial = cellRial(r[priceCol]);
+    if (!isValidCode(code) || rial === "invalid") {
+      badRows++;
+      continue;
+    }
+    prices.set(code, rialToToman(rial));
+  }
+  return { ok: true, prices, fileRows, badRows };
+}
+
+/** A price move bigger than this (percent of the old price) is a «big jump». */
+export const BIG_JUMP_PERCENT = 30;
+/** More big jumps than this in one file → they wait for the manager's «تأیید». */
+export const MAX_JUMPS_WITHOUT_APPROVAL = 50;
+
+export type IsacoGood = { id: string; code: string; name: string; warehouseId: string; purchasePriceToman: number | null };
+export type IsacoChange = { id: string; code: string; name: string; oldToman: number | null; newToman: number };
+
+export type IsacoPlan = {
+  /** Applied at once. */
+  apply: IsacoChange[];
+  /** Big jumps waiting for «تأیید» (only when there are more than MAX_JUMPS_WITHOUT_APPROVAL). */
+  waiting: IsacoChange[];
+  unchanged: number;
+  /** Goods of the ISACO warehouse not in the file: price kept. */
+  missing: number;
+  /** Goods whose file price is 0 / empty: price kept. */
+  noPrice: number;
+};
+
+/** |new − old| more than 30% of the old price. No old price (or 0) is never a jump. */
+export function isBigJump(oldToman: number | null, newToman: number): boolean {
+  if (oldToman === null || oldToman <= 0) return false;
+  return Math.abs(newToman - oldToman) * 100 > oldToman * BIG_JUMP_PERCENT;
+}
+
+/**
+ * What ISACO's file changes: purchase prices of the goods of the ISACO warehouse only. Missing
+ * goods and file prices of 0 keep the old price. More than 50 big jumps → those wait for «تأیید»
+ * and the rest apply.
+ */
+export function planIsacoPrices(
+  isacoWarehouseId: string,
+  goods: readonly IsacoGood[],
+  prices: ReadonlyMap<string, number | null>,
+): IsacoPlan {
+  const plan: IsacoPlan = { apply: [], waiting: [], unchanged: 0, missing: 0, noPrice: 0 };
+  const jumps: IsacoChange[] = [];
+  for (const g of goods) {
+    if (g.warehouseId !== isacoWarehouseId) continue;
+    if (!prices.has(g.code)) {
+      plan.missing++;
+      continue;
+    }
+    const price = prices.get(g.code) ?? null;
+    if (price === null) {
+      plan.noPrice++;
+      continue;
+    }
+    if (price === g.purchasePriceToman) {
+      plan.unchanged++;
+      continue;
+    }
+    const change = { id: g.id, code: g.code, name: g.name, oldToman: g.purchasePriceToman, newToman: price };
+    if (isBigJump(g.purchasePriceToman, price)) jumps.push(change);
+    else plan.apply.push(change);
+  }
+  if (jumps.length > MAX_JUMPS_WITHOUT_APPROVAL) plan.waiting = jumps;
+  else plan.apply.push(...jumps);
+  return plan;
+}
+
+/**
+ * «تأیید تغییرهای بزرگ»: a waiting jump is applied only if its good is still in the ISACO warehouse
+ * and still has the old price the file was compared with (else it changed since: leave it).
+ */
+export function waitingToApply<W extends { productId: string; oldToman: number | null }>(
+  waiting: readonly W[],
+  goods: ReadonlyMap<string, { warehouseId: string; purchasePriceToman: number | null }>,
+  isacoWarehouseId: string | null,
+): W[] {
+  return waiting.filter((w) => {
+    const g = goods.get(w.productId);
+    return !!g && !!isacoWarehouseId && g.warehouseId === isacoWarehouseId && g.purchasePriceToman === w.oldToman;
+  });
 }

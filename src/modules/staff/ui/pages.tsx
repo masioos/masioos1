@@ -22,7 +22,6 @@ export async function StaffLoginPage({ searchParams }: { searchParams: SearchPar
 const MANAGER_LINKS = [
   { href: "/admin/catalog", label: "کالاها" },
   { href: "/admin/catalog/new", label: "کالای جدید" },
-  { href: "/admin/catalog/import", label: "ورود از Excel" },
   { href: "/admin/catalog/lists", label: "فهرست‌ها" },
   { href: "/admin/warehouses", label: "انبارها" },
   { href: "/admin/customers", label: "مشتری‌ها" },

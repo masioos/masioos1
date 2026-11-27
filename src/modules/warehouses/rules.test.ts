@@ -4,7 +4,9 @@ import {
   newWarehouseSchema,
   normalizeCardNumber,
   parseProfitPercent,
-  setSheetModeSchema,
+  moveInOrder,
+  profitPercentSchema,
+  setInfoSchema,
 } from "./rules";
 
 describe("normalizeCardNumber", () => {
@@ -71,11 +73,29 @@ describe("formatProfitPercent", () => {
   });
 });
 
-describe("setSheetModeSchema", () => {
+
+describe("setInfoSchema", () => {
   const id = "6f1c2c1e-8a4b-4c55-9d7e-1a2b3c4d5e6f";
-  it("accepts only «موجودی و قیمت» and «فقط موجودی»", () => {
-    expect(setSheetModeSchema.safeParse({ id, sheetMode: "stock_and_price" }).success).toBe(true);
-    expect(setSheetModeSchema.safeParse({ id, sheetMode: "stock_only" }).success).toBe(true);
-    expect(setSheetModeSchema.safeParse({ id, sheetMode: "price_only" }).success).toBe(false);
+  it("needs a name and an owner of at least 2 letters", () => {
+    expect(setInfoSchema.safeParse({ id, name: " انبار رضا ", ownerName: "رضا" }).success).toBe(true);
+    expect(setInfoSchema.safeParse({ id, name: "ا", ownerName: "رضا" }).success).toBe(false);
+    expect(setInfoSchema.safeParse({ id, name: "انبار", ownerName: "" }).success).toBe(false);
+  });
+});
+
+describe("moveInOrder", () => {
+  it("moves one place up or down, and not past the top or bottom", () => {
+    expect(moveInOrder(["a", "b", "c"], "b", "up")).toEqual(["b", "a", "c"]);
+    expect(moveInOrder(["a", "b", "c"], "b", "down")).toEqual(["a", "c", "b"]);
+    expect(moveInOrder(["a", "b", "c"], "a", "up")).toEqual(["a", "b", "c"]);
+    expect(moveInOrder(["a", "b", "c"], "c", "down")).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("profitPercentSchema", () => {
+  it("an empty box is 0%", () => {
+    expect(profitPercentSchema.parse("")).toBe(0);
+    expect(profitPercentSchema.parse("  ")).toBe(0);
+    expect(profitPercentSchema.parse("5")).toBe(500);
   });
 });

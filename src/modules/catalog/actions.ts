@@ -14,6 +14,8 @@ import {
 } from "./rules";
 import {
   addPhoto,
+  approveIsacoWaiting,
+  chooseIsacoWarehouse,
   createProduct,
   dropSheetFile,
   importStockSheet,
@@ -87,10 +89,10 @@ export async function createProductAction(
   prev: ProductFormState,
   formData: FormData,
 ): Promise<ProductFormState> {
-  await requireManager();
+  const staff = await requireManager();
   const parsed = readProductForm(formData);
   if (!parsed.success) return productError(prev, formData, firstError(parsed.error));
-  const res = await createProduct(parsed.data);
+  const res = await createProduct(parsed.data, staff.id);
   if (!res.ok) return productError(prev, formData, res.error);
   refreshAll();
   // Open the edit page, where photos can be added.
@@ -101,12 +103,12 @@ export async function updateProductAction(
   prev: ProductFormState,
   formData: FormData,
 ): Promise<ProductFormState> {
-  await requireManager();
+  const staff = await requireManager();
   const id = z.uuid().safeParse(formData.get("id"));
   if (!id.success) return { error: "کالا پیدا نشد" };
   const parsed = readProductForm(formData);
   if (!parsed.success) return productError(prev, formData, firstError(parsed.error));
-  const res = await updateProduct(id.data, parsed.data);
+  const res = await updateProduct(id.data, parsed.data, staff.id);
   if (!res.ok) return productError(prev, formData, res.error);
   refreshAll();
   return { ok: true, attempt: (prev.attempt ?? 0) + 1 };
@@ -193,7 +195,7 @@ const applySchema = z.object({
  * writes it. Only the ticked new codes are created.
  */
 export async function applyStockSheetAction(prev: ImportState, formData: FormData): Promise<ImportState> {
-  await requireManager();
+  const staff = await requireManager();
   const parsed = applySchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "فایل را دوباره انتخاب کنید" };
   const selected = new Set(formData.getAll("newCode").map(String).filter(isValidCode));
@@ -208,9 +210,34 @@ export async function applyStockSheetAction(prev: ImportState, formData: FormDat
     confirmed: parsed.data.confirmed === "on",
     rejected: sheet.errors,
     previewMode: kept.kept.mode,
+    staffId: staff.id,
   });
   if (!res.ok) return prev.step === "preview" ? { ...prev, error: res.error } : { error: res.error };
   await dropSheetFile(parsed.data.token);
   refreshAll();
   return { step: "done", report: { ...res.report, fileErrors: sheet.errors } };
+}
+
+// ── ISACO prices (#8) ──────────────────────────────────────────────────────────────────
+
+/** «انبار ایساکو»: the one warehouse ISACO's price file updates. Saves as soon as it is picked. */
+export async function chooseIsacoWarehouseAction(formData: FormData): Promise<{ error?: string }> {
+  await requireManager();
+  const id = z.uuid().safeParse(formData.get("warehouseId"));
+  if (!id.success) return { error: "انبار را انتخاب کنید" };
+  const res = await chooseIsacoWarehouse(id.data);
+  if (!res.ok) return { error: res.error };
+  revalidatePath("/admin/warehouses");
+  return {};
+}
+
+/** «تأیید تغییرهای بزرگ» of the newest ISACO file. */
+export async function approveIsacoAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const staff = await requireManager();
+  const runId = z.uuid().safeParse(formData.get("runId"));
+  if (!runId.success) return { error: "صفحه را دوباره باز کنید" };
+  const res = await approveIsacoWaiting(staff.id, runId.data);
+  if (!res.ok) return { error: res.error };
+  refreshAll();
+  return { ok: true };
 }
