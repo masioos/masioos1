@@ -31,6 +31,7 @@ import {
   type ImportReport,
 } from "./service";
 import { requireManager } from "@/modules/staff";
+import { readPdfStockRows } from "./pdf-list";
 
 // Server actions for the catalog admin. Each validates on the server with zod (rules.ts).
 // Admin has no sign-in yet (#9): fine on a local PC, must be solved before the site goes public.
@@ -156,13 +157,18 @@ export type ImportState =
 
 const MAX_SHEET_BYTES = 5 * 1024 * 1024;
 
-async function readRows(bytes: Buffer): Promise<ReturnType<typeof parseStockSheetRows>> {
+/** An Excel stock sheet, or a warehouse's PDF price list (#3) read into the same rows. */
+async function readRows(bytes: Buffer, kind: "xlsx" | "pdf", warehouseId: string): Promise<ReturnType<typeof parseStockSheetRows>> {
+  if (kind === "pdf") return readPdfStockRows(warehouseId, new Uint8Array(bytes));
   try {
     return parseStockSheetRows(await readSheet(bytes));
   } catch {
     return { ok: false, error: "فایل خوانده نشد. آیا فایل Excel سالم است؟" };
   }
 }
+
+/** A PDF may be bigger than a sheet (pictures, fonts); both stay under the 11 MB action limit. */
+const MAX_PDF_BYTES = 10 * 1024 * 1024;
 
 /** Step 1 → 2: reads the sheet, keeps it on the server, and shows what it would change. */
 export async function previewStockSheetAction(_prev: ImportState, formData: FormData): Promise<ImportState> {
@@ -172,16 +178,19 @@ export async function previewStockSheetAction(_prev: ImportState, formData: Form
     return { error: "انبار را انتخاب کنید" };
   }
   const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return { error: "فایل Excel را انتخاب کنید" };
-  if (!file.name.toLowerCase().endsWith(".xlsx")) return { error: "فقط فایل .xlsx قبول می‌شود" };
-  if (file.size > MAX_SHEET_BYTES) return { error: "حجم فایل باید کمتر از ۵ مگابایت باشد" };
+  if (!(file instanceof File) || file.size === 0) return { error: "فایل اکسل یا PDF را انتخاب کنید" };
+  const name = file.name.toLowerCase();
+  const kind = name.endsWith(".xlsx") ? "xlsx" : name.endsWith(".pdf") ? "pdf" : null;
+  if (!kind) return { error: "فقط فایل اکسل (.xlsx) یا PDF قبول می‌شود" };
+  if (kind === "xlsx" && file.size > MAX_SHEET_BYTES) return { error: "حجم فایل اکسل باید کمتر از ۵ مگابایت باشد" };
+  if (kind === "pdf" && file.size > MAX_PDF_BYTES) return { error: "حجم فایل PDF باید کمتر از ۱۰ مگابایت باشد" };
 
   const bytes = Buffer.from(await file.arrayBuffer());
-  const sheet = await readRows(bytes);
+  const sheet = await readRows(bytes, kind, warehouseId.data);
   if (!sheet.ok) return { error: sheet.error };
   const preview = await previewStockSheet(warehouseId.data, sheet.rows, sheet.errors);
   if (!preview) return { error: "انبار را انتخاب کنید" };
-  const token = await keepSheetFile(bytes, { warehouseId: warehouseId.data, mode: preview.mode });
+  const token = await keepSheetFile(bytes, { warehouseId: warehouseId.data, mode: preview.mode, kind });
   return { step: "preview", token, warehouseId: warehouseId.data, preview, fileErrors: sheet.errors };
 }
 
@@ -202,10 +211,27 @@ export async function applyStockSheetAction(prev: ImportState, formData: FormDat
   // The warehouse and mode come from what was saved with the file, never from the form.
   const kept = await readSheetFile(parsed.data.token);
   if (!kept) return { error: "فایل پیدا نشد. دوباره انتخابش کنید." };
-  const sheet = await readRows(kept.bytes);
+  const sheet = await readRows(kept.bytes, kept.kept.kind ?? "xlsx", kept.kept.warehouseId);
   if (!sheet.ok) return { error: sheet.error };
 
+  // English codes typed in the preview (#3): «codePrefix», and «carCode:<car name>» per car.
+  const code = (v: FormDataEntryValue | null, re: RegExp) => {
+    const s = String(v ?? "").trim().toUpperCase();
+    return re.test(s) ? s : null;
+  };
+  const typedPrefix = formData.get("codePrefix");
+  if (typedPrefix !== null && String(typedPrefix).trim() !== "" && !code(typedPrefix, /^[A-Z]{1,5}$/)) {
+    return prev.step === "preview" ? { ...prev, error: "کد انبار فقط ۱ تا ۵ حرف انگلیسی است، مثل RF" } : { error: "کد انبار درست نیست" };
+  }
+  const carCodes = new Map<string, string>();
+  for (const [k, v] of formData) {
+    if (!k.startsWith("carCode:") || String(v).trim() === "") continue;
+    const c = code(v, /^[A-Z0-9]{1,5}$/);
+    if (!c) return prev.step === "preview" ? { ...prev, error: `کد خودروی «${k.slice(8)}» فقط ۱ تا ۵ حرف یا عدد انگلیسی است` } : { error: "کد خودرو درست نیست" };
+    carCodes.set(k.slice(8), c);
+  }
   const res = await importStockSheet(kept.kept.warehouseId, sheet.rows, {
+    given: { prefix: code(typedPrefix, /^[A-Z]{1,5}$/), cars: carCodes },
     selectedNew: selected,
     confirmed: parsed.data.confirmed === "on",
     rejected: sheet.errors,

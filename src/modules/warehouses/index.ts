@@ -6,4 +6,6 @@
 export { CreateWarehouseForm } from "./ui/create-warehouse-form";
 export { selectedWarehouse, WarehouseTable } from "./ui/warehouse-table";
 export { getWarehouseProfits, listWarehouses } from "./service";
+// The import of a price list (#3, catalog) sets a missing warehouse code typed in its preview.
+export { setWarehouseCodePrefix } from "./service";
 export type { Warehouse } from "./schema";

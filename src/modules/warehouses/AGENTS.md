@@ -18,6 +18,7 @@ part at a time: name + owner, card + holder once 16 digits, profit). Each row ha
 that warehouse's blue panel (`?w=<id>`, `selectedWarehouse`), drawn by catalog (`WarehousePanel`):
 stock sheet on the right, prices on the left; the ISACO warehouse's panel is titled «ایساکو».
 Depends on `settings` (`getIsacoWarehouseId`, to title the ISACO row's button «ایساکو») and `staff`.
+`code_prefix` («کد انگلیسی», 1–5 letters, unique): the start of codes for price-list goods (#3).
 Order: `position` (▲ ▼ at the end of each row, `moveWarehouse`; a new warehouse goes last).
 `sheet_mode` is no longer used (catalog's `sheetModeFor`: ISACO warehouse → only stock); the column
 stays until a migration removes it.

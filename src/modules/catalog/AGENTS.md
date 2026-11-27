@@ -42,6 +42,25 @@ Files live in `UPLOAD_DIR` (`./uploads` in dev, the `uploads` volume in producti
 Names are `<uuid>.<jpg|png|webp>`; the type comes from the file bytes. Max 5 MB, 6 per product.
 Served by `src/app/media/[file]/route.ts` through `readPhoto`.
 
+## PDF price lists (#3)
+
+- The panel's «به‌روز کردن موجودی» takes an Excel stock sheet **or** a readable PDF price list (≤ 10 MB).
+  `pdf-list.ts` reads its text with `unpdf` (pdf.js) line by line; `rules.parsePriceListLines` takes
+  «نام کالا» · «واحد» · «فی ریال» under the header of each page and car headings between goods
+  (shape of رفیع نیا's lists). `fixLamAlef` fixes the «لا» those PDFs store as «ال» (known words only).
+- No technical code in such lists: each row gets `list_key` (normalized name | car) and a temporary
+  code (`L` + 9 hex of sha256). A good the warehouse already has with that key gives the row its code
+  (`resolveListRows`), so the same name + car is the same good every month; a changed name is new.
+- New goods get a readable code `RF.P405.001` = warehouse `code_prefix` . car `short_code` . number
+  (`makeListCodes`; no car → `GEN`). Missing prefix or car codes → `codeProblem` in the preview,
+  «تأیید و ورود» off. The warehouse is the brand and ends the name (`withBrand`, «… - رفیع نیا»).
+  Goods made with a temporary code are converted on the next import (`oldListGoods`).
+- Then it is the #2 import as is (ticks, «ناموجود», price history `sheet`). Purchase = list price, Rial → Toman.
+- The shop shows every name with its technical code at the end (`shopName`).
+- Every good that comes from a warehouse file (Excel stock sheet or PDF list) has the warehouse as brand
+  and at the end of its name; goods made before that rule get it when a later file has them.
+- A PDF with no text (scanned pictures) → «این PDF عکس است…» (#25 will read those).
+
 ## ISACO prices (#8)
 
 - One warehouse is the ISACO warehouse (`settings.getIsacoWarehouseId`, chosen with «قیمت این انبار از فایل ایساکو بیاید»

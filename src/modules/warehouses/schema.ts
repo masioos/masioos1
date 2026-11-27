@@ -11,6 +11,9 @@ export const warehouses = pgTable("warehouses", {
   cardHolder: text("card_holder").notNull().default(""),
   // Profit added on top of the purchase price, in basis points (1000 = 10%). Integer: no floats in money.
   profitBp: integer("profit_bp").notNull().default(0),
+  // Short English code, e.g. «RF» for رفیع نیا: the start of the codes the site makes for this
+  // warehouse's price-list goods (#3), like «RF.PR.012».
+  codePrefix: text("code_prefix").unique(),
   // Not used any more: the ISACO warehouse's stock sheet changes only stock, others stock and
   // price (catalog's `sheetModeFor`). Kept so no data is dropped; remove with a migration later.
   sheetMode: text("sheet_mode", { enum: ["stock_and_price", "stock_only"] }).notNull().default("stock_and_price"),

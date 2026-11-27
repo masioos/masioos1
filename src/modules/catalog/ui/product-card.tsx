@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatToman, unitPriceLabel, type Unit } from "../rules";
+import { formatToman, shopName, unitPriceLabel, type Unit } from "../rules";
 import type { ProductAction } from "./shop";
 import type { ShopProduct } from "../service";
 import { Photo } from "./photo";
@@ -38,7 +38,7 @@ export function ProductCard({ product, action }: { product: ShopProduct; action?
           <span className="text-muted-foreground text-xs">بدون عکس</span>
         )}
       </div>
-      <h3 className="line-clamp-2 text-sm font-medium">{product.name}</h3>
+      <h3 className="line-clamp-2 text-sm font-medium">{shopName(product.name, product.code)}</h3>
       <p className="text-muted-foreground text-xs">
         {[product.brandName, product.countryName].filter(Boolean).join(" · ") || " "}
       </p>

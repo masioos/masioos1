@@ -17,6 +17,7 @@ One word, one meaning. Use these words in code, issues and chat. Persian in brac
 | **Stock sheet** (فایل موجودی) | A supplier's Excel list (e.g. `Mojoodi_4104070_*.xlsx`): code, name, car, price in Rial. |
 | **Price source** (منبع قیمت) | Where a warehouse's purchase prices come from: by hand, its stock sheet, or «ایساکو» (ISACO's full Excel price file, «قیمت خرده‌فروشی»). |
 | **Price history** (تاریخچه‌ی قیمت) | Every purchase-price change of a product, with time and source. |
+| **PDF price list** (لیست قیمت PDF) | A warehouse's list as a readable PDF (e.g. رفیع نیا): name, unit, price in Rial, car headings, no technical code. The site makes the code and finds goods by name + car. A scanned PDF (pictures) is not read yet. |
 | **Stock only** (فقط موجودی) | A warehouse setting: its stock sheet changes only what is available; prices come from elsewhere. The other value is «موجودی و قیمت». |
 | **Sheet-unavailable** | A good the stock sheet made «ناموجود» because it was missing; a later sheet that has it makes it available again. Goods made unavailable by hand are not. |
 | **Price list** (لیست قیمت) | Where a warehouse's prices come from: typed by hand, an uploaded PDF, or an online feed. |
