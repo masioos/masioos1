@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { saveListItemAction } from "../actions";
 import type { ListKind } from "../rules";
 
-type Item = { id: string; name: string; parentId?: string | null };
+type Item = { id: string; name: string; parentId?: string | null; shortCode?: string | null };
 
 const selectClass = "h-8 rounded-lg border border-input bg-background px-2 text-sm";
 
@@ -33,6 +33,18 @@ function ItemForm({
         className="w-64"
         required
       />
+      {kind === "cars" && (
+        <Input
+          name="shortCode"
+          aria-label="کد انگلیسی خودرو"
+          title="برای کد کالاهای لیست قیمت، مثل RF.PR.012"
+          placeholder="PR"
+          dir="ltr"
+          maxLength={5}
+          defaultValue={item?.shortCode ?? ""}
+          className="w-20 uppercase"
+        />
+      )}
       {parents && (
         <select
           name="parentId"

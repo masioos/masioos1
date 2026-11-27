@@ -4,6 +4,7 @@ import {
   newWarehouseSchema,
   normalizeCardNumber,
   parseProfitPercent,
+  codePrefixSchema,
   moveInOrder,
   profitPercentSchema,
   setInfoSchema,
@@ -97,5 +98,16 @@ describe("profitPercentSchema", () => {
     expect(profitPercentSchema.parse("")).toBe(0);
     expect(profitPercentSchema.parse("  ")).toBe(0);
     expect(profitPercentSchema.parse("5")).toBe(500);
+  });
+});
+
+describe("codePrefixSchema", () => {
+  const id = "6f1c2c1e-8a4b-4c55-9d7e-1a2b3c4d5e6f";
+  it("1–5 English letters, upper case; empty is none", () => {
+    expect(codePrefixSchema.parse({ id, codePrefix: " rf " }).codePrefix).toBe("RF");
+    expect(codePrefixSchema.parse({ id, codePrefix: "" }).codePrefix).toBeNull();
+    expect(codePrefixSchema.safeParse({ id, codePrefix: "RF1" }).success).toBe(false);
+    expect(codePrefixSchema.safeParse({ id, codePrefix: "رف" }).success).toBe(false);
+    expect(codePrefixSchema.safeParse({ id, codePrefix: "ABCDEF" }).success).toBe(false);
   });
 });

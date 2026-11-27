@@ -2,12 +2,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { and, asc, count, desc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db/client";
 import { env } from "@/env";
 import { getIsacoWarehouseId, setIsacoWarehouseId } from "@/modules/settings";
 import { getStaffNames } from "@/modules/staff";
-import { getWarehouseProfits, listWarehouses } from "@/modules/warehouses";
+import { getWarehouseProfits, listWarehouses, setWarehouseCodePrefix } from "@/modules/warehouses";
 import {
   buildSearchText,
   detectImageType,
@@ -18,6 +18,8 @@ import {
   PHOTO_CONTENT_TYPES,
   planIsacoPrices,
   planStockImport,
+  makeListCodes,
+  withBrand,
   waitingToApply,
   sheetModeFor,
   type ExistingGood,
@@ -87,7 +89,7 @@ const listTables = {
   partGroups: catalogPartGroups,
 } as const;
 
-export type ListItem = { id: string; name: string; parentId?: string | null };
+export type ListItem = { id: string; name: string; parentId?: string | null; shortCode?: string | null };
 
 export async function listItems(kind: ListKind): Promise<ListItem[]> {
   if (kind === "categories") {
@@ -95,6 +97,12 @@ export async function listItems(kind: ListKind): Promise<ListItem[]> {
       .select({ id: catalogCategories.id, name: catalogCategories.name, parentId: catalogCategories.parentId })
       .from(catalogCategories)
       .orderBy(asc(catalogCategories.name));
+  }
+  if (kind === "cars") {
+    return db
+      .select({ id: catalogCars.id, name: catalogCars.name, shortCode: catalogCars.shortCode })
+      .from(catalogCars)
+      .orderBy(asc(catalogCars.name));
   }
   const t = listTables[kind];
   return db.select({ id: t.id, name: t.name }).from(t).orderBy(asc(t.name));
@@ -132,6 +140,12 @@ export async function saveListItem(input: ListItemInput): Promise<Result> {
       else await db.insert(catalogCategories).values(values);
       return { ok: true };
     }
+    if (input.kind === "cars") {
+      const values = { name: input.name, shortCode: input.shortCode };
+      if (input.id) await db.update(catalogCars).set(values).where(eq(catalogCars.id, input.id));
+      else await db.insert(catalogCars).values(values);
+      return { ok: true };
+    }
     const t = listTables[input.kind];
     if (!input.id) {
       await db.insert(t).values({ name: input.name });
@@ -155,7 +169,7 @@ export async function saveListItem(input: ListItemInput): Promise<Result> {
     });
     return { ok: true };
   } catch (e) {
-    if (uniqueViolation(e) !== null) return { ok: false, error: "این نام قبلاً ثبت شده است" };
+    if (uniqueViolation(e) !== null) return { ok: false, error: "این نام یا کد قبلاً ثبت شده است" };
     if (missingReference(e)) return { ok: false, error: MISSING };
     throw e;
   }
@@ -418,6 +432,9 @@ export type ImportReport = {
 
 /** What an import would change, shown before «تأیید و ورود». Nothing is written. */
 export type ImportPreview = {
+  /** Price lists (#3): the warehouse or a car still needs an English code; typed in the preview. */
+  codeProblem: string | null;
+  codeNeeds: CodeNeeds | null;
   warehouseName: string;
   mode: SheetMode;
   newRows: StockRow[];
@@ -436,7 +453,8 @@ function importsDir() {
 const SHEET_KEEP_MS = 24 * 60 * 60 * 1000;
 
 /** What the manager saw in the preview: the warehouse and its sheet mode, kept next to the file. */
-export type KeptSheet = { warehouseId: string; mode: SheetMode };
+/** `kind`: an Excel stock sheet or a PDF price list (#3); both become stock-sheet rows. */
+export type KeptSheet = { warehouseId: string; mode: SheetMode; kind: "xlsx" | "pdf" };
 
 const keptFile = (token: string, ext: "xlsx" | "json") => path.join(/*turbopackIgnore: true*/ importsDir(), `${token}.${ext}`);
 
@@ -478,10 +496,81 @@ export async function warehouseExists(id: string): Promise<boolean> {
   return (await getWarehouseProfits([id])).has(id);
 }
 
-async function warehouseOf(id: string): Promise<{ name: string; mode: SheetMode } | null> {
+async function warehouseOf(id: string): Promise<{ name: string; mode: SheetMode; codePrefix: string | null } | null> {
   const [list, isacoId] = await Promise.all([listWarehouses(), getIsacoWarehouseId()]);
   const w = list.find((x) => x.id === id);
-  return w ? { name: w.name, mode: sheetModeFor(w.id, isacoId) } : null;
+  return w ? { name: w.name, mode: sheetModeFor(w.id, isacoId), codePrefix: w.codePrefix } : null;
+}
+
+/**
+ * Price-list rows (#3) carry a temporary code; a good this warehouse already has with the same
+ * name + car (`list_key`) gives the row its real code, so the plan matches it.
+ */
+async function resolveListRows(q: Reader, warehouseId: string, rows: StockRow[]): Promise<StockRow[]> {
+  const keys = rows.flatMap((r) => (r.listKey ? [r.listKey] : []));
+  if (keys.length === 0) return rows;
+  const known = await q
+    .select({ code: catalogProducts.code, listKey: catalogProducts.listKey })
+    .from(catalogProducts)
+    .where(and(eq(catalogProducts.warehouseId, warehouseId), inArray(catalogProducts.listKey, keys)));
+  const codeOf = new Map(known.map((k) => [k.listKey, k.code]));
+  return rows.map((r) => (r.listKey && codeOf.has(r.listKey) ? { ...r, code: codeOf.get(r.listKey) ?? r.code } : r));
+}
+
+/**
+ * Codes like «RF.PR.012» for the price-list goods that need one (new ones, and goods made before
+ * codes were readable). A Persian message when the warehouse or a car has no English code yet.
+ */
+async function listCodesFor(
+  q: Reader,
+  w: { name: string; codePrefix: string | null },
+  rows: readonly StockRow[],
+): Promise<{ ok: true; codes: Map<string, string> } | { ok: false; error: string; needs: CodeNeeds }> {
+  const need = rows.filter((r) => r.listKey);
+  if (need.length === 0) return { ok: true, codes: new Map() };
+  if (!w.codePrefix) {
+    const cars = [...new Set(need.flatMap((r) => (r.car ? [r.car] : [])))];
+    const known = cars.length
+      ? await q.select({ name: catalogCars.name, shortCode: catalogCars.shortCode }).from(catalogCars).where(inArray(catalogCars.name, cars))
+      : [];
+    const coded = new Set(known.filter((c) => c.shortCode).map((c) => c.name));
+    return {
+      ok: false,
+      error: `برای ساختن کد کالاها، کد انگلیسی انبار «${w.name}» لازم است.`,
+      needs: { prefix: true, cars: cars.filter((c) => !coded.has(c)) },
+    };
+  }
+  const [cars, used] = await Promise.all([
+    q.select({ name: catalogCars.name, shortCode: catalogCars.shortCode }).from(catalogCars),
+    q.select({ code: catalogProducts.code }).from(catalogProducts).where(ilike(catalogProducts.code, `${w.codePrefix}.%`)),
+  ]);
+  const res = makeListCodes(
+    need.map((r) => ({ key: r.listKey ?? "", car: r.car })),
+    w.codePrefix,
+    new Map(cars.map((c) => [c.name, c.shortCode])),
+    used.map((u) => u.code),
+  );
+  if (res.missingCars.length > 0) {
+    return {
+      ok: false,
+      error: `برای ساختن کد کالاها، کد انگلیسی این خودروها لازم است: ${res.missingCars.join("، ")}`,
+      needs: { prefix: false, cars: res.missingCars },
+    };
+  }
+  return { ok: true, codes: res.codes };
+}
+
+/** English codes the preview asks for (#3): the warehouse's, and cars with none. */
+export type CodeNeeds = { prefix: boolean; cars: string[] };
+
+/** Price-list goods with no readable code yet (made before #3's codes): matched by their temporary code. */
+async function oldListGoods(q: Reader, warehouseId: string, rows: readonly StockRow[]) {
+  const temp = rows.filter((r) => r.listKey).map((r) => r.code);
+  if (temp.length === 0) return [];
+  return q
+    .select({ id: catalogProducts.id, code: catalogProducts.code, name: catalogProducts.name, brandId: catalogProducts.brandId })
+    .from(catalogProducts)
+    .where(and(eq(catalogProducts.warehouseId, warehouseId), isNull(catalogProducts.listKey), inArray(catalogProducts.code, temp)));
 }
 
 type Reader = Pick<typeof db, "select">;
@@ -497,6 +586,7 @@ async function goodsFor(q: Reader, warehouseId: string, rows: readonly StockRow[
       warehouseId: catalogProducts.warehouseId,
       purchasePriceToman: catalogProducts.purchasePriceToman,
       fromSheet: catalogProducts.fromSheet,
+      brandId: catalogProducts.brandId,
       isUnavailable: catalogProducts.isUnavailable,
       unavailableSource: catalogProducts.unavailableSource,
     })
@@ -520,9 +610,14 @@ export async function previewStockSheet(
 ): Promise<ImportPreview | null> {
   const w = await warehouseOf(warehouseId);
   if (!w) return null;
-  const existing = await goodsFor(db, warehouseId, rows);
-  const plan = planStockImport({ warehouseId, mode: w.mode, rows, existing, selectedNew: new Set(), rejected });
+  const resolved = await resolveListRows(db, warehouseId, rows);
+  const existing = await goodsFor(db, warehouseId, resolved);
+  const plan = planStockImport({ warehouseId, mode: w.mode, rows: resolved, existing, selectedNew: new Set(), rejected });
+  const old = new Set((await oldListGoods(db, warehouseId, resolved)).map((g) => g.code));
+  const codes = await listCodesFor(db, w, [...plan.newRows, ...resolved.filter((r) => old.has(r.code))]);
   return {
+    codeProblem: codes.ok ? null : codes.error,
+    codeNeeds: codes.ok ? null : codes.needs,
     warehouseName: w.name,
     mode: w.mode,
     newRows: plan.newRows,
@@ -543,18 +638,65 @@ const CONFIRM_NEEDED = "بیشتر از نصف کالاهای این انبار 
 export async function importStockSheet(
   warehouseId: string,
   rows: StockRow[],
-  opts: { selectedNew: ReadonlySet<string>; confirmed: boolean; rejected: StockRowError[]; previewMode: SheetMode; staffId: string },
+  opts: {
+    selectedNew: ReadonlySet<string>;
+    confirmed: boolean;
+    rejected: StockRowError[];
+    previewMode: SheetMode;
+    staffId: string;
+    /** English codes typed in the preview (#3): the warehouse's, and cars' by car name. */
+    given?: { prefix: string | null; cars: ReadonlyMap<string, string> };
+  },
 ): Promise<{ ok: true; report: ImportReport } | { ok: false; error: string }> {
-  const w = await warehouseOf(warehouseId);
-  if (!w) return { ok: false, error: "انبار پیدا نشد" };
+  const found = await warehouseOf(warehouseId);
+  if (!found) return { ok: false, error: "انبار پیدا نشد" };
+  let w = found;
+  if (opts.given?.prefix && !w.codePrefix) {
+    if (!(await setWarehouseCodePrefix(warehouseId, opts.given.prefix))) {
+      return { ok: false, error: `کد «${opts.given.prefix}» برای انبار دیگری است. کد دیگری بنویسید.` };
+    }
+    w = { ...w, codePrefix: opts.given.prefix };
+  }
   // The manager approved what the preview showed: a mode changed since then would change other things.
   if (w.mode !== opts.previewMode) return { ok: false, error: "تنظیم فایل اکسل این انبار عوض شده است. فایل را دوباره بخوانید." };
 
   return db.transaction(async (tx) => {
-    const existing = await goodsFor(tx, warehouseId, rows);
-    const plan = planStockImport({ warehouseId, mode: w.mode, rows, existing, selectedNew: opts.selectedNew, rejected: opts.rejected });
+    const resolved = await resolveListRows(tx, warehouseId, rows);
+    const existing = await goodsFor(tx, warehouseId, resolved);
+    const plan = planStockImport({ warehouseId, mode: w.mode, rows: resolved, existing, selectedNew: opts.selectedNew, rejected: opts.rejected });
     if (plan.needsConfirm && !opts.confirmed) return { ok: false as const, error: CONFIRM_NEEDED };
+    // Price-list goods (#3): readable codes, the warehouse as brand at the end of the name.
+    const old = await oldListGoods(tx, warehouseId, resolved);
+    const oldCodes = new Set(old.map((g) => g.code));
+    // Cars typed in the preview: made (or given their code) before the codes are worked out.
+    for (const [name, shortCode] of opts.given?.cars ?? []) {
+      const [taken] = await tx.select({ name: catalogCars.name }).from(catalogCars).where(eq(catalogCars.shortCode, shortCode));
+      if (taken && taken.name !== name) return { ok: false as const, error: `کد «${shortCode}» مال خودروی «${taken.name}» است. کد دیگری بنویسید.` };
+      await tx
+        .insert(catalogCars)
+        .values({ name, shortCode })
+        .onConflictDoUpdate({ target: catalogCars.name, set: { shortCode }, setWhere: isNull(catalogCars.shortCode) });
+    }
+    const listCodes = await listCodesFor(tx, w, [...plan.create, ...resolved.filter((r) => oldCodes.has(r.code))]);
+    if (!listCodes.ok) return { ok: false as const, error: listCodes.error };
+    // Every good that comes from a warehouse's file has the warehouse as brand, at the end of its name.
+    await tx.insert(catalogBrands).values({ name: w.name }).onConflictDoNothing();
+    const [brand] = await tx.select({ id: catalogBrands.id }).from(catalogBrands).where(eq(catalogBrands.name, w.name));
+    const brandId = brand?.id ?? null;
     const now = new Date();
+    // Goods made from a list before readable codes: give them their code, brand and key now.
+    const converted = new Set<string>();
+    for (const g of old) {
+      const row = resolved.find((r) => r.code === g.code);
+      const code = row?.listKey ? listCodes.codes.get(row.listKey) : undefined;
+      if (!row || !code) continue;
+      const name = withBrand(g.name, w.name);
+      await tx
+        .update(catalogProducts)
+        .set({ code, name, brandId: g.brandId ?? brandId, listKey: row.listKey, searchText: buildSearchText(name, code, w.name), updatedAt: now })
+        .where(eq(catalogProducts.id, g.id));
+      converted.add(g.id);
+    }
 
     // Cars named in the rows we write: create the missing ones, then map name → id.
     const used = [...plan.create, ...plan.matched.map((m) => m.row)];
@@ -585,6 +727,18 @@ export async function importStockSheet(
       await tx.update(catalogProducts).set({ fromSheet: true }).where(inArray(catalogProducts.id, ids(chunk)));
       for (const m of chunk) link(m.id, m.row.car);
     }
+    // Goods made before the brand rule: every good of this warehouse that came from a file (in this
+    // one or an earlier one, available or not) gets the warehouse brand at the end of its name, once.
+    const matchedIds = new Set(plan.matched.map((m) => m.id));
+    for (const good of existing) {
+      if (good.warehouseId !== warehouseId || !(good.fromSheet || matchedIds.has(good.id)) || converted.has(good.id)) continue;
+      const named = withBrand(good.name, w.name);
+      if (named === good.name) continue;
+      await tx
+        .update(catalogProducts)
+        .set({ name: named, brandId: good.brandId ?? brandId, searchText: buildSearchText(named, good.code, w.name), updatedAt: now })
+        .where(eq(catalogProducts.id, good.id));
+    }
     if (plan.makeAvailable.length > 0) {
       await tx
         .update(catalogProducts)
@@ -604,17 +758,24 @@ export async function importStockSheet(
       const rowsMade = await tx
         .insert(catalogProducts)
         .values(
-          chunk.map((r) => ({
+          chunk.map((r) => {
+            const code = (r.listKey && listCodes.codes.get(r.listKey)) || r.code;
+            const name = withBrand(r.name, w.name);
+            return {
             warehouseId,
-            code: r.code,
-            name: r.name,
+            code,
+            name,
+            brandId,
+            listKey: r.listKey ?? null,
             purchasePriceToman: r.purchaseToman,
+            unit: r.unit ?? "piece",
             fromSheet: true,
-            searchText: buildSearchText(r.name, r.code, null),
-          })),
+            searchText: buildSearchText(name, code, w.name),
+            };
+          }),
         )
         .returning({ id: catalogProducts.id, code: catalogProducts.code });
-      const rowByCode = new Map(chunk.map((r) => [r.code, r]));
+      const rowByCode = new Map(chunk.map((r) => [(r.listKey && listCodes.codes.get(r.listKey)) || r.code, r]));
       for (const p of rowsMade) link(p.id, rowByCode.get(p.code)?.car ?? null);
       await recordPriceChanges(
         tx,

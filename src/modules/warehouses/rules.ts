@@ -76,6 +76,16 @@ export function moveInOrder(ids: readonly string[], id: string, direction: "up" 
   return order;
 }
 
+/** «RF»: 1–5 English letters, upper case; empty = none. */
+export const codePrefixSchema = z.object({
+  id: z.uuid(),
+  codePrefix: z
+    .string()
+    .transform((s) => s.trim().toUpperCase())
+    .pipe(z.string().regex(/^[A-Z]{0,5}$/, "کد انبار فقط ۱ تا ۵ حرف انگلیسی است، مثل RF"))
+    .transform((s) => s || null),
+});
+
 export const setProfitSchema = z.object({
   id: z.uuid(),
   profitBp: profitPercentSchema,

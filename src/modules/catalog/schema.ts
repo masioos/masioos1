@@ -23,6 +23,9 @@ const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull(
 export const catalogCars = pgTable("catalog_cars", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull().unique(),
+  // Short English code, e.g. «PR» for پراید: part of the codes the site makes for price-list
+  // goods (#3), like «RF.PR.012». Typed by the manager in «فهرست‌ها».
+  shortCode: text("short_code").unique(),
   createdAt: createdAt(),
 });
 
@@ -82,6 +85,8 @@ export const catalogProducts = pgTable(
     // An Excel stock sheet created it or had its code (#2). Only these goods go «ناموجود» when
     // missing from a later sheet; goods made by hand and never in a sheet are left alone.
     fromSheet: boolean("from_sheet").notNull().default(false),
+    // A PDF price-list good (#3): normalized name + car, how the next list finds it. null otherwise.
+    listKey: text("list_key"),
     // Sold per piece (عدد) or per pair (جفت). Prices are per unit.
     unit: text("unit", { enum: ["piece", "pair"] }).notNull().default("piece"),
     // normalizeSearch(name + code + brand). Written by the app on every save, so search is one ILIKE.
@@ -92,6 +97,7 @@ export const catalogProducts = pgTable(
   (t) => [
     index("catalog_products_warehouse_idx").on(t.warehouseId),
     index("catalog_products_part_group_idx").on(t.partGroupId),
+    index("catalog_products_list_key_idx").on(t.warehouseId, t.listKey),
   ],
 );
 

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { moveWarehouseAction, saveWarehouseAction } from "../actions";
 
-type Part = "info" | "card" | "profit";
+type Part = "info" | "card" | "profit" | "prefix";
 
 /**
  * One warehouse in the list, edited in place. Each part saves by itself a moment after typing
@@ -22,7 +22,7 @@ export function WarehouseRow({
 }: {
   first: boolean;
   last: boolean;
-  w: { id: string; name: string; ownerName: string; cardNumber: string; cardHolder: string; profit: string; isIsaco: boolean };
+  w: { id: string; name: string; ownerName: string; cardNumber: string; cardHolder: string; profit: string; codePrefix: string; isIsaco: boolean };
   selected: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -31,6 +31,7 @@ export function WarehouseRow({
     info: `${w.name}|${w.ownerName}`,
     card: `${w.cardNumber}|${w.cardHolder}`,
     profit: w.profit,
+    prefix: w.codePrefix,
   });
   const [status, setStatus] = useState<{ kind: "saving" | "saved" | "error"; text?: string }>();
   const [, start] = useTransition();
@@ -45,14 +46,17 @@ export function WarehouseRow({
         ? `${value("name")}|${value("ownerName")}`
         : part === "card"
           ? `${value("cardNumber").replace(/\D/g, "")}|${value("cardHolder")}`
-          : value("profitBp");
+          : part === "prefix"
+            ? value("codePrefix").toUpperCase()
+            : value("profitBp");
     if (key === lastSaved.current[part]) return;
     // A card is saved only when complete; until then nothing is sent.
     if (part === "card" && value("cardNumber").replace(/\D/g, "").length !== 16) return;
     const fd = new FormData();
     fd.set("id", w.id);
     fd.set("part", part);
-    for (const k of part === "info" ? ["name", "ownerName"] : part === "card" ? ["cardNumber", "cardHolder"] : ["profitBp"]) {
+    const fields = { info: ["name", "ownerName"], card: ["cardNumber", "cardHolder"], profit: ["profitBp"], prefix: ["codePrefix"] }[part];
+    for (const k of fields) {
       fd.set(k, String(all.get(k) ?? ""));
     }
     setStatus({ kind: "saving" });
@@ -74,6 +78,7 @@ export function WarehouseRow({
     const name = t instanceof Element ? t.getAttribute("name") : null;
     if (name === "name" || name === "ownerName") return "info";
     if (name === "cardNumber" || name === "cardHolder") return "card";
+    if (name === "codePrefix") return "prefix";
     return name === "profitBp" ? "profit" : null;
   };
 
@@ -100,7 +105,7 @@ export function WarehouseRow({
           onBlur={(e) => {
             const p = partOf(e.target);
             if (p) later(p, 0);
-          }} className="grid grid-cols-[1fr_1fr_15rem_9rem_6rem] items-start gap-2 p-2">
+          }} className="grid grid-cols-[1fr_1fr_15rem_9rem_5rem_6rem] items-start gap-2 p-2">
           <Input name="name" aria-label="نام انبار" defaultValue={w.name} />
           <Input name="ownerName" aria-label="صاحب انبار" defaultValue={w.ownerName} />
           <div className="grid gap-1">
@@ -111,6 +116,15 @@ export function WarehouseRow({
             <Input name="profitBp" aria-label="درصد سود" inputMode="decimal" dir="ltr" placeholder="0" defaultValue={w.profit} className="w-20" />
             <span>٪</span>
           </span>
+          <Input
+            name="codePrefix"
+            aria-label="کد انگلیسی انبار"
+            placeholder="RF"
+            dir="ltr"
+            maxLength={5}
+            defaultValue={w.codePrefix}
+            className="w-20 uppercase"
+          />
           <span className="pt-2 text-xs">
             {status?.kind === "saving" && <span className="text-muted-foreground">در حال ذخیره…</span>}
             {status?.kind === "saved" && <span className="text-green-700">✓ ذخیره شد</span>}

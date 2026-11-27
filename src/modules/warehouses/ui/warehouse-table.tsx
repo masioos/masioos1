@@ -29,11 +29,12 @@ export async function WarehouseTable({ searchParams }: { searchParams: SearchPar
             <TableRow>
               <TableHead className="w-24">پنل</TableHead>
               <TableHead>
-                <span className="grid grid-cols-[1fr_1fr_15rem_9rem_6rem] gap-2">
+                <span className="grid grid-cols-[1fr_1fr_15rem_9rem_5rem_6rem] gap-2">
                   <span>نام انبار</span>
                   <span>صاحب انبار</span>
                   <span>شماره کارت و نام صاحب کارت</span>
                   <span>درصد سود</span>
+                  <span title="برای کد کالاهای لیست قیمت، مثل RF.PR.012">کد انگلیسی</span>
                   <span />
                 </span>
               </TableHead>
@@ -54,6 +55,7 @@ export async function WarehouseTable({ searchParams }: { searchParams: SearchPar
                   cardNumber: w.cardNumber,
                   cardHolder: w.cardHolder,
                   profit: formatProfitPercent(w.profitBp),
+                  codePrefix: w.codePrefix ?? "",
                   isIsaco: w.id === isacoId,
                 }}
               />

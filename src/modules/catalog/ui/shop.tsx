@@ -3,14 +3,14 @@ import { Button } from "@/components/ui/button";
 import { groupFa } from "@/lib/money";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { DEFAULT_SHOP_PAGE_SIZE, isUuid, normalizeCode, shopPageSize, type Unit } from "../rules";
+import { DEFAULT_SHOP_PAGE_SIZE, isUuid, normalizeCode, shopName, shopPageSize, type Unit } from "../rules";
 import {
   getProductByCode,
   listFilterOptions,
   listOtherModels,
   searchProducts,
 } from "../service";
-import { LiveSearchInput } from "./live-search-input";
+import { LiveFilterSelect, LiveSearchInput } from "./live-search-input";
 import { categoryOptions, selectClass } from "./options";
 import { PageSizeSelect } from "./page-size-select";
 import { Pager } from "./pager";
@@ -37,14 +37,14 @@ function FilterSelect({
   options: { id: string; label: string }[];
 }) {
   return (
-    <select name={name} defaultValue={value} aria-label={label} className={`${selectClass} sm:w-44`}>
+    <LiveFilterSelect name={name} defaultValue={value} aria-label={label} className={`${selectClass} sm:w-44`}>
       <option value="">{label}: همه</option>
       {options.map((o) => (
         <option key={o.id} value={o.id}>
           {o.label}
         </option>
       ))}
-    </select>
+    </LiveFilterSelect>
   );
 }
 
@@ -160,7 +160,7 @@ export async function ProductDetails({
           )}
         </div>
         <div className="flex flex-col gap-4">
-          <h1 className="text-2xl font-bold">{product.name}</h1>
+          <h1 className="text-2xl font-bold">{shopName(product.name, product.code)}</h1>
           <div className="flex items-center gap-3 text-lg">
             <PriceText toman={product.shopPriceToman} unit={product.unit} />
             {product.isUnavailable && <UnavailableBadge />}

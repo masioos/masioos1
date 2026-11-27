@@ -42,6 +42,24 @@ export async function setWarehouseInfo(id: string, name: string, ownerName: stri
   await db.update(warehouses).set({ name, ownerName }).where(eq(warehouses.id, id));
 }
 
+/** null when another warehouse already has the code. */
+export async function setWarehouseCodePrefix(id: string, codePrefix: string | null): Promise<boolean> {
+  if (codePrefix) {
+    const [other] = await db.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.codePrefix, codePrefix));
+    if (other && other.id !== id) return false;
+  }
+  try {
+    await db.update(warehouses).set({ codePrefix }).where(eq(warehouses.id, id));
+  } catch (e) {
+    // Another save took the code between the check and the update (unique rule).
+    if ((e as { code?: string; cause?: { code?: string } }).code === "23505" || (e as { cause?: { code?: string } }).cause?.code === "23505") {
+      return false;
+    }
+    throw e;
+  }
+  return true;
+}
+
 export async function setWarehouseCard(id: string, cardNumber: string, cardHolder: string) {
   await db.update(warehouses).set({ cardNumber, cardHolder }).where(eq(warehouses.id, id));
 }

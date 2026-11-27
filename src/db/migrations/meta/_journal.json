@@ -127,6 +127,13 @@
       "when": 1795776005003,
       "tag": "0017_warehouse_position",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795783230509,
+      "tag": "0018_short_codes",
+      "breakpoints": true
     }
   ]
 }

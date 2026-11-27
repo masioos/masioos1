@@ -49,10 +49,24 @@ function ImportSteps({ warehouses, again }: { warehouses: { id: string; name: st
             </select>
           </>
         )}
-        <Label htmlFor="file">فایل موجودی (Excel با پسوند xlsx)</Label>
-        <input id="file" name="file" type="file" accept=".xlsx" required className="text-sm" />
+        <Label htmlFor="file">فایل موجودی اکسل (xlsx) یا لیست قیمت PDF (قابل کپی)</Label>
+        <input
+          id="file"
+          name="file"
+          type="file"
+          accept=".xlsx,.pdf"
+          required
+          className="text-sm"
+          onChange={(e) => {
+            // A big file would fail on the way without a message: say it here first.
+            const f = e.currentTarget.files?.[0];
+            const max = f?.name.toLowerCase().endsWith(".pdf") ? 10 : 5;
+            e.currentTarget.setCustomValidity(f && f.size > max * 1024 * 1024 ? `حجم فایل باید کمتر از ${groupFa(max)} مگابایت باشد` : "");
+            e.currentTarget.reportValidity();
+          }}
+        />
         <p className="text-muted-foreground text-xs">
-          ستون‌های لازم: «کد فنی قطعه»، «نام قطعه»، «گروه خودرو»، «قیمت فروش (ریال)». قبل از ذخیره، تغییرها و
+          اکسل: ستون‌های «کد فنی قطعه»، «نام قطعه»، «گروه خودرو»، «قیمت فروش (ریال)». PDF: ستون‌های «نام کالا»، «واحد»، «فی ریال» و نام خودرو به‌صورت عنوان بین کالاها؛ کد کالا را سایت خودش می‌سازد. قبل از ذخیره، تغییرها و
           کالاهای تازه را می‌بینید. برای انبار ایساکو فقط موجودی عوض می‌شود (قیمت از فایل ایساکو می‌آید)؛ برای بقیه‌ی انبارها موجودی و قیمت.
         </p>
         <Button type="submit" disabled={reading}>
@@ -102,7 +116,7 @@ function Preview({
       <input type="hidden" name="token" value={state.token} />
       <section className="flex flex-col gap-2 rounded-xl border p-4">
         <h2 className="text-lg font-bold">
-          انبار {p.warehouseName} — فایل اکسل: {MODE_NAMES[p.mode]}
+          انبار {p.warehouseName} — این فایل: {MODE_NAMES[p.mode]}
         </h2>
         <Summary
           rows={[
@@ -137,9 +151,12 @@ function Preview({
               <li key={r.code}>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" name="newCode" value={r.code} className="size-4" />
-                  <span dir="ltr" className="font-mono">
-                    {r.code}
-                  </span>
+                  {/* A price-list good gets its readable code («RF.PR.012») when it is saved. */}
+                  {!r.listKey && (
+                    <span dir="ltr" className="font-mono">
+                      {r.code}
+                    </span>
+                  )}
                   <span>{r.name}</span>
                   {r.car && <span className="text-muted-foreground">— {r.car}</span>}
                   {p.mode === "stock_and_price" && r.purchaseToman !== null && (
@@ -161,6 +178,26 @@ function Preview({
           <input type="checkbox" name="confirmed" className="size-4" onChange={() => setUnsure(false)} />
           بیشتر از نصف کالاهای این انبار ناموجود می‌شوند. مطمئنی فایل درست است؟ مطمئنم
         </label>
+      )}
+      {p.codeNeeds && (
+        <section className="flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <h2 className="font-bold">کد انگلیسی برای ساختن کد کالاها (مثل RF.PR.012)</h2>
+          <p className="text-sm">
+            {p.codeProblem} همین‌جا بنویس؛ با «تأیید و ورود» ذخیره می‌شود. فقط برای کالاهایی که تیک زده‌ای لازم است.
+          </p>
+          {p.codeNeeds.prefix && (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="w-40">کد انبار «{p.warehouseName}»</span>
+              <input name="codePrefix" dir="ltr" maxLength={5} placeholder="RF" className="border-input w-24 rounded-md border px-2 py-1 uppercase" />
+            </label>
+          )}
+          {p.codeNeeds.cars.map((car) => (
+            <label key={car} className="flex items-center gap-2 text-sm">
+              <span className="w-40">کد خودروی «{car}»</span>
+              <input name={`carCode:${car}`} dir="ltr" maxLength={5} placeholder="PR" className="border-input w-24 rounded-md border px-2 py-1 uppercase" />
+            </label>
+          ))}
+        </section>
       )}
       {error && <p className="text-destructive">{error}</p>}
       <span className="flex gap-2">

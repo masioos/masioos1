@@ -177,6 +177,13 @@ export const listItemSchema = z.object({
   id: optionalId,
   name: z.string().transform(normalizeName).pipe(z.string().min(2, "نام حداقل ۲ حرف است").max(200)),
   parentId: optionalId,
+  // Cars only: a short English code, e.g. «PR» (#3). Empty = none.
+  shortCode: z
+    .string()
+    .default("")
+    .transform((s) => s.trim().toUpperCase())
+    .pipe(z.string().regex(/^[A-Z0-9]{0,5}$/, "کد خودرو فقط ۱ تا ۵ حرف یا عدد انگلیسی است، مثل PR"))
+    .transform((s) => s || null),
 });
 
 export type ListItemInput = z.infer<typeof listItemSchema>;
@@ -201,7 +208,16 @@ export const STOCK_SHEET_HEADERS = {
   priceRial: "قیمت فروش (ریال)",
 } as const;
 
-export type StockRow = { row: number; code: string; name: string; car: string | null; purchaseToman: number | null };
+export type StockRow = {
+  row: number;
+  code: string;
+  name: string;
+  car: string | null;
+  purchaseToman: number | null;
+  unit?: Unit;
+  /** Price-list goods (#3): name + car, how the next list finds the good. */
+  listKey?: string;
+};
 export type StockRowError = { row: number; code: string; reason: string };
 export type StockSheet =
   | { ok: true; rows: StockRow[]; errors: StockRowError[] }
@@ -311,6 +327,8 @@ export type ExistingGood = {
   id: string;
   code: string;
   name: string;
+  /** A brand staff chose stays; only an empty one becomes the warehouse brand. */
+  brandId?: string | null;
   warehouseId: string;
   purchasePriceToman: number | null;
   fromSheet: boolean;
@@ -531,4 +549,176 @@ export function waitingToApply<W extends { productId: string; oldToman: number |
     const g = goods.get(w.productId);
     return !!g && !!isacoWarehouseId && g.warehouseId === isacoWarehouseId && g.purchasePriceToman === w.oldToman;
   });
+}
+
+// ── PDF price lists (#3) ───────────────────────────────────────────────────────────────
+
+/** One line of a PDF page: its text pieces with their x position (bigger x = further right). */
+export type PdfLine = { items: { x: number; s: string }[]; pageStart?: boolean };
+
+/**
+ * Some PDF writers (رفیع نیا's lists, made from Excel) store the «لا» ligature as «ال», so
+ * «لاستیک» comes out as «الستیک». A real «ال» (e.g. «ال 90») looks the same, so only known
+ * spellings are fixed. Names are shown in the preview before anything is saved.
+ */
+const LAM_ALEF_FIXES: [RegExp, string][] = [
+  [/اال/g, "الا"], // «کاال» → «کالا» (Persian never has two alefs in a row)
+  [/الستیک/g, "لاستیک"],
+  [/محصوالت/g, "محصولات"],
+  [/کالچ/g, "کلاچ"],
+  [/پالتین/g, "پلاتین"],
+  [/(^|\s)المپ/g, "$1لامپ"],
+];
+
+export function fixLamAlef(text: string): string {
+  return LAM_ALEF_FIXES.reduce((s, [re, to]) => s.replace(re, to), text);
+}
+
+export type PdfListRow = { name: string; car: string | null; unit: Unit; priceRial: number };
+
+export type PdfList = { ok: true; rows: PdfListRow[]; badLines: number } | { ok: false; error: string };
+
+const PRICE_TOKEN = /^\d{1,3}(,\d{3})+$|^\d+$/;
+const tidy = (s: string) =>
+  normalizeName(fixLamAlef(s))
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .trim();
+const unitOf = (s: string): Unit => (tidy(s) === "جفت" ? "pair" : "piece");
+
+/**
+ * Reads a price list PDF's lines (shape of رفیع نیا's: a header «ردیف · نام کالا · تعداد در کارتن ·
+ * واحد · فی (بر) ریال» on every page, car headings between goods, one good per line).
+ * A line with a price in the price column is a good; a line after the header with no price and no
+ * row number is a car heading for the goods under it (also across pages). Lines before the first
+ * header are the list title.
+ */
+export function parsePriceListLines(lines: readonly PdfLine[]): PdfList {
+  const rows: PdfListRow[] = [];
+  let cols: { name: number; qty: number; unit: number; price: number } | null = null;
+  let car: string | null = null;
+  let badLines = 0;
+
+  for (const line of lines) {
+    const items = [...line.items].sort((a, b) => b.x - a.x);
+    const text = tidy(items.map((i) => i.s).join(" "));
+    if (text.includes("نام کالا") && text.includes("فی")) {
+      const at = (word: string) => items.find((i) => tidy(i.s).includes(word))?.x;
+      const name = at("نام کالا");
+      const unit = at("واحد");
+      const price = at("فی");
+      if (name === undefined || unit === undefined || price === undefined) continue;
+      cols = { name, qty: at("تعداد") ?? (name + unit) / 2, unit, price };
+      continue;
+    }
+    // Before the first header: the list title. After it, goods may also come before a later page's
+    // header (a page can start with goods): those are read too, under the car heading so far.
+    if (!cols) continue;
+    if (text === "ردیف") continue;
+
+    const unitFrom = (cols.unit + cols.price) / 2;
+    const qtyFrom = (cols.qty + cols.unit) / 2;
+    const nameFrom = (cols.name + cols.qty) / 2;
+    const priceItem = items.find((i) => i.x < unitFrom && PRICE_TOKEN.test(i.s.trim()));
+    if (!priceItem) {
+      // No price, every word in the name column, no row number: the rest of the name above it.
+      const last = rows[rows.length - 1];
+      if (last && items.every((i) => i.x >= nameFrom) && !/^\d+$/.test(items[0].s.trim())) {
+        last.name = tidy(`${last.name} ${text}`);
+        continue;
+      }
+      // Otherwise a car heading (or a page title / empty line, which then has no goods under it).
+      const words = items.filter((i) => !/^\d+$/.test(i.s.trim()) || i.x < nameFrom);
+      if (words.length > 0 && words.every((i) => i.x < nameFrom + 40)) car = tidy(words.map((i) => i.s).join(" "));
+      continue;
+    }
+    const nameWords = items.filter((i) => i.x >= nameFrom);
+    // The row number sits at the far right of the name column: drop a leading plain number.
+    if (nameWords.length > 0 && /^\d+$/.test(nameWords[0].s.trim()) && nameWords[0].x > cols.name + 60) nameWords.shift();
+    const name = tidy(nameWords.map((i) => i.s).join(" "));
+    const unitWord = items.find((i) => i.x >= unitFrom && i.x < qtyFrom);
+    const priceRial = Number(priceItem.s.replace(/,/g, ""));
+    if (name.length < 2 || !Number.isFinite(priceRial)) {
+      badLines++;
+      continue;
+    }
+    rows.push({ name, car, unit: unitWord ? unitOf(unitWord.s) : "piece", priceRial });
+  }
+  if (rows.length === 0) {
+    return { ok: false, error: "در این PDF ردیف کالا و قیمت پیدا نشد. ستون‌های «نام کالا» و «فی ریال» لازم است." };
+  }
+  return { ok: true, rows, badLines };
+}
+
+/** What identifies a good of a PDF list from month to month: its name and car. */
+export function listKey(name: string, car: string | null): string {
+  return `${normalizeSearch(name)}|${normalizeSearch(car ?? "")}`;
+}
+
+/**
+ * PDF rows → stock-sheet rows for the #2 import. Lists have no technical code, so the site makes
+ * one: «L» + 9 hex characters of a hash of warehouse + name + car (`hash` is sha256 hex, passed in
+ * so this stays pure). The same name and car get the same code every month. Rial → Toman.
+ */
+export function pdfListToStockRows(
+  warehouseId: string,
+  rows: readonly PdfListRow[],
+  hash: (text: string) => string,
+): { rows: StockRow[]; errors: StockRowError[] } {
+  const out: StockRow[] = [];
+  const errors: StockRowError[] = [];
+  const seen = new Set<string>();
+  rows.forEach((r, i) => {
+    const key = listKey(r.name, r.car);
+    const code = `L${hash(`${warehouseId}|${key}`).slice(0, 9).toUpperCase()}`;
+    if (seen.has(code)) {
+      errors.push({ row: i + 1, code, reason: `«${r.name}» دو بار در لیست آمده است` });
+      return;
+    }
+    seen.add(code);
+    out.push({ row: i + 1, code, name: r.name, car: r.car, purchaseToman: rialToToman(r.priceRial), unit: r.unit, listKey: key });
+  });
+  return { rows: out, errors };
+}
+
+/** A price-list good's name in the shop ends with its warehouse (its brand): «… - رفیع نیا». */
+export function withBrand(name: string, brand: string): string {
+  return name.endsWith(` - ${brand}`) ? name : `${name} - ${brand}`;
+}
+
+/**
+ * Readable codes for new price-list goods: «RF.PR.012» = warehouse code . car code . number,
+ * numbered after the highest code already used for that warehouse and car (no car → «GEN»).
+ * Cars with no English code yet are listed instead, so the manager can add them first.
+ */
+export function makeListCodes(
+  rows: readonly { key: string; car: string | null }[],
+  prefix: string,
+  carCodes: ReadonlyMap<string, string | null>,
+  usedCodes: readonly string[],
+): { codes: Map<string, string>; missingCars: string[] } {
+  const codes = new Map<string, string>();
+  const missing = new Set<string>();
+  const next = new Map<string, number>();
+  for (const used of usedCodes) {
+    const m = /^([A-Z]+\.[A-Z0-9]+)\.(\d+)$/.exec(used);
+    if (m) next.set(m[1], Math.max(next.get(m[1]) ?? 0, Number(m[2])));
+  }
+  for (const r of rows) {
+    const car = r.car ? carCodes.get(r.car) : "GEN";
+    if (!car) {
+      if (r.car) missing.add(r.car);
+      continue;
+    }
+    const stem = `${prefix}.${car}`;
+    const n = (next.get(stem) ?? 0) + 1;
+    next.set(stem, n);
+    codes.set(r.key, `${stem}.${String(n).padStart(3, "0")}`);
+  }
+  return { codes, missingCars: [...missing] };
+}
+
+/** The name the shop shows: the technical code at the end, as parts shops do («… 0750401199»). */
+export function shopName(name: string, code: string): string {
+  return name.includes(code) ? name : `${name} ${code}`;
 }

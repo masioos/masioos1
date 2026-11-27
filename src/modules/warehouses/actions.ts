@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { moveSchema, newWarehouseSchema, setCardSchema, setInfoSchema, setProfitSchema } from "./rules";
-import { createWarehouse, moveWarehouse, setWarehouseCard, setWarehouseInfo, setWarehouseProfit } from "./service";
+import { codePrefixSchema, moveSchema, newWarehouseSchema, setCardSchema, setInfoSchema, setProfitSchema } from "./rules";
+import { createWarehouse, moveWarehouse, setWarehouseCard, setWarehouseCodePrefix, setWarehouseInfo, setWarehouseProfit } from "./service";
 import { requireManager } from "@/modules/staff";
 
 export type CreateWarehouseState = { error?: string; ok?: boolean; made?: number };
@@ -37,6 +37,12 @@ export async function saveWarehouseAction(formData: FormData): Promise<{ error?:
     const parsed = setCardSchema.safeParse(data);
     if (!parsed.success) return { error: parsed.error.issues[0]?.message };
     await setWarehouseCard(parsed.data.id, parsed.data.cardNumber, parsed.data.cardHolder);
+  } else if (part === "prefix") {
+    const parsed = codePrefixSchema.safeParse(data);
+    if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+    if (!(await setWarehouseCodePrefix(parsed.data.id, parsed.data.codePrefix))) {
+      return { error: "این کد برای انبار دیگری است" };
+    }
   } else if (part === "profit") {
     const parsed = setProfitSchema.safeParse(data);
     if (!parsed.success) return { error: parsed.error.issues[0]?.message };

@@ -13,6 +13,12 @@ import {
   normalizeSearch,
   parseStockSheetRows,
   planStockImport,
+  shopName,
+  makeListCodes,
+  withBrand,
+  fixLamAlef,
+  parsePriceListLines,
+  pdfListToStockRows,
   waitingToApply,
   sheetModeFor,
   parseIsacoSheet,
@@ -453,5 +459,137 @@ describe("waitingToApply", () => {
   });
   it("applies nothing when there is no ISACO warehouse", () => {
     expect(waitingToApply([w("a", 100)], goods, null)).toEqual([]);
+  });
+});
+
+describe("fixLamAlef (#3)", () => {
+  it("fixes the «لا» that رفیع نیا's PDFs store as «ال», and keeps a real «ال»", () => {
+    expect(fixLamAlef("نام کاال")).toBe("نام کالا");
+    expect(fixLamAlef("الستیکی")).toBe("لاستیکی");
+    expect(fixLamAlef("محصوالت")).toBe("محصولات");
+    expect(fixLamAlef("طبق کامل ال 90")).toBe("طبق کامل ال 90");
+  });
+});
+
+describe("parsePriceListLines (#3)", () => {
+  // Pieces as رفیع نیا's PDF gives them: x from the left, Persian read right to left.
+  const header = { items: [{ x: 512, s: "ردیف" }, { x: 387, s: "نام کاال" }, { x: 245, s: "تعداد در کارتن" }, { x: 200, s: "واحد" }, { x: 109, s: "فی بریال" }] };
+  const title = { items: [{ x: 498, s: "لیست" }, { x: 469, s: "قیمت" }, { x: 380, s: "محصوالت" }], pageStart: true };
+  const car = (s: string) => ({ items: [{ x: 290, s }] });
+  const good = (n: string, name: string[], qty: string, unit: string, price: string) => ({
+    items: [{ x: 510, s: n }, ...name.map((s, i) => ({ x: 450 - i * 20, s })), { x: 264, s: qty }, { x: 203, s: unit }, { x: 108, s: price }],
+  });
+  const lines = [
+    title,
+    header,
+    car("پژو 405"),
+    good("1", ["سیبک طبق پژو", "405"], "60", "عدد", "3,900,000"),
+    good("2", ["سیبک فرمان پژو", "405", "(", "راست", ")"], "30", "عدد", "4,900,000"),
+    car("پراید"),
+    good("3", ["نرو ماده"], "10", "جفت", "750,000"),
+    { items: [{ x: 412, s: "طبق کامل رنو ساندرو چپ" }, { x: 267, s: "6" }, { x: 203, s: "عدد" }, { x: 105, s: "25,000,000" }] },
+    { ...header, pageStart: true },
+    car("سمند"),
+    good("4", ["لنت ترمز سمند"], "20", "دست", "12,360,000"),
+  ];
+  const res = parsePriceListLines(lines);
+  it("reads goods with their car, unit and price; the title above the header is skipped", () => {
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.rows).toEqual([
+      { name: "سیبک طبق پژو 405", car: "پژو 405", unit: "piece", priceRial: 3_900_000 },
+      { name: "سیبک فرمان پژو 405 (راست)", car: "پژو 405", unit: "piece", priceRial: 4_900_000 },
+      { name: "نرو ماده", car: "پراید", unit: "pair", priceRial: 750_000 },
+      { name: "طبق کامل رنو ساندرو چپ", car: "پراید", unit: "piece", priceRial: 25_000_000 },
+      { name: "لنت ترمز سمند", car: "سمند", unit: "piece", priceRial: 12_360_000 },
+    ]);
+  });
+  it("goods at the top of a page, before that page's header, are read under the car so far", () => {
+    const res = parsePriceListLines([
+      header,
+      car("پراید"),
+      good("87", ["کاسه چرخ عقب پراید"], "4", "عدد", "14,510,000"),
+      { ...good("88", ["لنت ترمز پراید"], "24", "دست", "8,778,000"), pageStart: true },
+      header,
+      car("ریو - تیبا"),
+      good("91", ["طبق ریو"], "4", "عدد", "13,800,000"),
+    ]);
+    expect(res.ok && res.rows.map((r) => [r.car, r.name])).toEqual([
+      ["پراید", "کاسه چرخ عقب پراید"],
+      ["پراید", "لنت ترمز پراید"],
+      ["ریو - تیبا", "طبق ریو"],
+    ]);
+  });
+  it("a name that wraps onto its own line (name column, no price, no row number) joins the good above", () => {
+    const res = parsePriceListLines([
+      header,
+      car("پراید"),
+      good("78", ["جعبه فرمان پراید مکانیکی"], "4", "عدد", "55,100,000"),
+      { items: [{ x: 430, s: "بدون سیبک و قرقری" }] },
+      car("ریو - تیبا"),
+      good("79", ["طبق ریو"], "4", "عدد", "13,800,000"),
+    ]);
+    expect(res.ok && res.rows.map((r) => [r.car, r.name])).toEqual([
+      ["پراید", "جعبه فرمان پراید مکانیکی بدون سیبک و قرقری"],
+      ["ریو - تیبا", "طبق ریو"],
+    ]);
+  });
+  it("a PDF with no goods (e.g. a scanned one) is an error", () => {
+    expect(parsePriceListLines([title]).ok).toBe(false);
+  });
+});
+
+describe("pdfListToStockRows (#3)", () => {
+  const hash = (t: string) => Array.from(t).reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16).padStart(9, "0");
+  const row = (name: string, car: string | null, priceRial = 3_900_000) => ({ name, car, unit: "piece" as const, priceRial });
+  it("Rial → Toman, a code made from warehouse + name + car, the same every month", () => {
+    const a = pdfListToStockRows("w1", [row("سیبک طبق پژو 405", "پژو 405")], hash);
+    const b = pdfListToStockRows("w1", [row("سیبک  طبق پژو ۴۰۵", "پژو 405", 4_000_000)], hash);
+    expect(a.rows[0].purchaseToman).toBe(390_000);
+    expect(a.rows[0].code).toMatch(/^L[0-9A-F]{9}$/);
+    expect(b.rows[0].code).toBe(a.rows[0].code);
+  });
+  it("another car or another warehouse is another good", () => {
+    const one = pdfListToStockRows("w1", [row("لنت ترمز", "پژو 405"), row("لنت ترمز", "پراید")], hash);
+    expect(one.rows[0].code).not.toBe(one.rows[1].code);
+    expect(pdfListToStockRows("w2", [row("لنت ترمز", "پژو 405")], hash).rows[0].code).not.toBe(one.rows[0].code);
+  });
+  it("the same good twice in one list is reported, not created twice", () => {
+    const res = pdfListToStockRows("w1", [row("لنت ترمز", "پراید"), row("لنت ترمز", "پراید")], hash);
+    expect(res.rows).toHaveLength(1);
+    expect(res.errors).toHaveLength(1);
+  });
+  it("shop price of 390,000 with 5% profit is 409,000 (rounded down to 1,000)", () => {
+    expect(shopPriceToman(390_000, 500)).toBe(409_000);
+  });
+});
+
+describe("price-list codes and brand (#3)", () => {
+  const cars = new Map<string, string | null>([["پراید", "PR"], ["پژو 405", "P405"], ["سمند", null]]);
+  it("RF.PR.001 onward per warehouse and car, after the codes already used", () => {
+    const res = makeListCodes(
+      [{ key: "a", car: "پراید" }, { key: "b", car: "پراید" }, { key: "c", car: "پژو 405" }, { key: "d", car: null }],
+      "RF",
+      cars,
+      ["RF.PR.007", "RF.P405.abc", "ZZ.PR.050"],
+    );
+    expect(Object.fromEntries(res.codes)).toEqual({ a: "RF.PR.008", b: "RF.PR.009", c: "RF.P405.001", d: "RF.GEN.001" });
+    expect(res.missingCars).toEqual([]);
+  });
+  it("lists the cars that have no English code yet", () => {
+    const res = makeListCodes([{ key: "a", car: "سمند" }, { key: "b", car: "سمند" }, { key: "c", car: "پیکان" }], "RF", cars, []);
+    expect(res.missingCars).toEqual(["سمند", "پیکان"]);
+    expect(res.codes.size).toBe(0);
+  });
+  it("the warehouse name goes at the end of the name, once", () => {
+    expect(withBrand("سیبک طبق پژو 405", "رفیع نیا")).toBe("سیبک طبق پژو 405 - رفیع نیا");
+    expect(withBrand("سیبک طبق پژو 405 - رفیع نیا", "رفیع نیا")).toBe("سیبک طبق پژو 405 - رفیع نیا");
+  });
+});
+
+describe("shopName", () => {
+  it("shows the technical code at the end of the name, once", () => {
+    expect(shopName("سیبک طبق پژو 405 - رفیع نیا", "RF.P405.001")).toBe("سیبک طبق پژو 405 - رفیع نیا RF.P405.001");
+    expect(shopName("رله فن 0750401199", "0750401199")).toBe("رله فن 0750401199");
   });
 });

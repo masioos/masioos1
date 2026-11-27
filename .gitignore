@@ -52,3 +52,4 @@ CLAUDE.local.md
 # Supplier price / stock files Alireza drops in for testing (never committed)
 docs/*.xlsx
 docs/*.xls
+docs/*.pdf
