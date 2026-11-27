@@ -4,6 +4,6 @@
 // listWarehouses / getWarehouseProfits are server-only: never import this file from a client component.
 
 export { CreateWarehouseForm } from "./ui/create-warehouse-form";
-export { WarehouseTable } from "./ui/warehouse-table";
+export { selectedWarehouse, WarehouseTable } from "./ui/warehouse-table";
 export { getWarehouseProfits, listWarehouses } from "./service";
 export type { Warehouse } from "./schema";

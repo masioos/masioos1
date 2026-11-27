@@ -11,7 +11,7 @@ export function CreateWarehouseForm() {
   const [state, formAction, pending] = useActionState(createWarehouseAction, {});
 
   return (
-    <form action={formAction} className="grid max-w-md gap-3">
+    <form key={state.made ?? 0} action={formAction} className="grid max-w-md gap-3">
       <Label htmlFor="name">نام انبار</Label>
       <Input id="name" name="name" required />
       <Label htmlFor="ownerName">صاحب انبار</Label>
@@ -21,7 +21,8 @@ export function CreateWarehouseForm() {
       <Label htmlFor="cardHolder">نام صاحب کارت</Label>
       <Input id="cardHolder" name="cardHolder" required />
       <Label htmlFor="profitBp">درصد سود (روی قیمت خرید)</Label>
-      <Input id="profitBp" name="profitBp" inputMode="decimal" dir="ltr" defaultValue="0" required />
+      <Input id="profitBp" name="profitBp" inputMode="decimal" dir="ltr" placeholder="0" />
+      <p className="text-muted-foreground -mt-2 text-xs">خالی بماند یعنی ۰٪.</p>
       {state.error && <p className="text-destructive text-sm">{state.error}</p>}
       {state.ok && <p className="text-sm text-green-700">انبار ثبت شد.</p>}
       <Button type="submit" disabled={pending}>

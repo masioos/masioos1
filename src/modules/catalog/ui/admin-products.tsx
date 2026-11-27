@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { faDateTime } from "@/lib/date";
 import { groupFa } from "@/lib/money";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,7 @@ import { canSee, requireStaff } from "@/modules/staff";
 import { formatToman, isUuid } from "../rules";
 import {
   getProductForEdit,
+  priceHistory,
   listProductFormOptions,
   listProductsAdmin,
   PAGE_SIZE,
@@ -150,7 +152,7 @@ export async function EditProduct({
 }) {
   const [{ id }, sp] = await Promise.all([params, searchParams]);
   if (!isUuid(id)) notFound();
-  const [data, options] = await Promise.all([getProductForEdit(id), listProductFormOptions()]);
+  const [data, options, history] = await Promise.all([getProductForEdit(id), listProductFormOptions(), priceHistory(id)]);
   if (!data) notFound();
   const { product, carIds, photos } = data;
 
@@ -168,6 +170,46 @@ export async function EditProduct({
       </div>
       <ProductForm options={options} product={{ ...product, carIds }} />
       <PhotoManager productId={product.id} photos={photos} />
+      <PriceHistory rows={history} />
     </div>
+  );
+}
+
+const SOURCE_NAMES = { hand: "دستی", sheet: "فایل موجودی", isaco: "ایساکو" } as const;
+
+/** «تاریخچه‌ی قیمت خرید» (#8): every purchase-price change, newest first. Manager only (edit page). */
+function PriceHistory({ rows }: { rows: Awaited<ReturnType<typeof priceHistory>> }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-lg font-bold">تاریخچه‌ی قیمت خرید</h2>
+      {rows.length === 0 ? (
+        <p className="text-muted-foreground text-sm">هنوز تغییری ثبت نشده است.</p>
+      ) : (
+        <div dir="ltr" className="max-h-80 overflow-auto rounded-lg border">
+          <table dir="rtl" className="w-full bg-[#fbf7f2] text-sm">
+            <thead className="sticky top-0 bg-blue-100">
+              <tr className="text-right">
+                <th className="p-2">زمان</th>
+                <th className="p-2">قیمت قبلی</th>
+                <th className="p-2">قیمت تازه</th>
+                <th className="p-2">از کجا</th>
+                <th className="p-2">چه کسی</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-[#ece3d6]">
+                  <td className="p-2">{faDateTime(r.at)}</td>
+                  <td className="p-2">{price(r.oldToman)}</td>
+                  <td className="p-2">{price(r.newToman)}</td>
+                  <td className="p-2">{SOURCE_NAMES[r.source]}</td>
+                  <td className="p-2">{r.staffName || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

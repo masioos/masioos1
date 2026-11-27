@@ -36,3 +36,19 @@ export async function setGatewayTaxPercent(percent: number) {
     .values({ key: GATEWAY_TAX, value })
     .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
 }
+
+const ISACO_WAREHOUSE = "isaco_warehouse_id";
+
+/** The one warehouse whose purchase prices come from ISACO's price file (#8), or null. */
+export async function getIsacoWarehouseId(): Promise<string | null> {
+  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, ISACO_WAREHOUSE));
+  return row?.value || null;
+}
+
+/** Set by catalog's ISACO page (manager only; the caller checks the warehouse exists). */
+export async function setIsacoWarehouseId(warehouseId: string) {
+  await db
+    .insert(settings)
+    .values({ key: ISACO_WAREHOUSE, value: warehouseId })
+    .onConflictDoUpdate({ target: settings.key, set: { value: warehouseId, updatedAt: new Date() } });
+}

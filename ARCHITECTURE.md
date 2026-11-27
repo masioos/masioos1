@@ -60,7 +60,8 @@ validates with zod (`rules.ts`) and calls `service.ts`.
   module exports from `index.ts`.
 - All modules share one DB and one transaction scope. No events, no queues.
 - Dependency direction: `requests` → `catalog`, `customers`, `warehouses`, `settings` (gateway tax percent,
-  #19); `catalog` → `warehouses`.
+  #19); `catalog` → `warehouses`, `settings` (the ISACO warehouse, #8); `warehouses` → `settings`
+  (marks the ISACO warehouse's row, #8).
   Every module with admin pages or staff actions → `staff` (sign-in checks); `staff` depends on none.
   `catalog` shows the add-to-cart button through a render prop the page passes in.
 - A module's `schema.ts` may import another module's `schema.ts` only to declare a foreign key

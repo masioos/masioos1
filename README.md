@@ -94,7 +94,7 @@ idea → /grill → /plan → /build → you test it → /review → /ship
 | فروشگاه (جست‌وجو و فیلترها) | http://localhost:3000 |
 | انبارها و درصد سود | http://localhost:3000/admin/warehouses |
 | کالاها | http://localhost:3000/admin/catalog |
-| ورود کالا از Excel | http://localhost:3000/admin/catalog/import |
+| ورود کالا از Excel (موجودی و قیمت هر انبار) | http://localhost:3000/admin/warehouses → دکمه‌ی کنار انبار |
 | فهرست‌ها (خودرو، برند، کشور، دسته، گروه قطعه) | http://localhost:3000/admin/catalog/lists |
 | سبد خرید | http://localhost:3000/cart |
 | ورود کارکنان (مدیر و فروشنده‌ها) | http://localhost:3000/admin/login |

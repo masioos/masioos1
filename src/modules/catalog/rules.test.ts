@@ -13,6 +13,11 @@ import {
   normalizeSearch,
   parseStockSheetRows,
   planStockImport,
+  waitingToApply,
+  sheetModeFor,
+  parseIsacoSheet,
+  planIsacoPrices,
+  isBigJump,
   priceMove,
   type ExistingGood,
   productFormSchema,
@@ -358,5 +363,95 @@ describe("planStockImport with rejected rows", () => {
       rejected: [{ row: 5, code: "", reason: "کد فنی خالی است" }],
     });
     expect(p.makeUnavailable.map((g) => g.code)).toEqual(["111"]);
+  });
+});
+
+describe("parseIsacoSheet (#8)", () => {
+  const header = ["کد تدارکاتی", "شرح تدارکاتی", "مصرف خودرو", "واحد سنجش", "تعداد در بسته", "قیمت خرده فروشی", "قیمت با ارزش افزوده"];
+  it("finds the columns, reads Rial as Toman, and 0 / empty as no price", () => {
+    const res = parseIsacoSheet([
+      header,
+      ["0010201299", "آينه داخل", "پژو پارس", "عدد", 1, 8400000, 9240000],
+      ["۰۰۳۰-۱۰۰۵۹۹", "آرم", "پژو 405", "عدد", 10, 896000, 985600],
+      ["0050102699", "استارت", "پژو 206", "عدد", 1, 0, 0],
+      ["0060100299", "استکان", "پژو پارس", "عدد", 8, "", ""],
+    ]);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.prices.get("0010201299")).toBe(840_000);
+    expect(res.prices.get("0030100599")).toBe(89_600);
+    expect(res.prices.get("0050102699")).toBeNull();
+    expect(res.prices.get("0060100299")).toBeNull();
+    expect(res.fileRows).toBe(4);
+  });
+  it("works with the columns in another order, and counts bad rows", () => {
+    const res = parseIsacoSheet([["قیمت خرده فروشی", "کد تدارکاتی"], [1000, "11"], ["abc", "22"], [1000, "کد بد"]]);
+    expect(res.ok && res.prices.get("11")).toBe(100);
+    expect(res.ok && res.badRows).toBe(2);
+  });
+  it("says which column is missing", () => {
+    expect(parseIsacoSheet([["کد تدارکاتی", "قیمت عمده"]]).ok).toBe(false);
+  });
+});
+
+describe("planIsacoPrices (#8)", () => {
+  const W = "isaco";
+  const g = (code: string, old: number | null, warehouseId = W) => ({ id: `id-${code}`, code, name: code, warehouseId, purchasePriceToman: old });
+  it("changes only the goods of the ISACO warehouse", () => {
+    const p = planIsacoPrices(W, [g("1", 100), g("2", 100, "other")], new Map([["1", 110], ["2", 500]]));
+    expect(p.apply.map((c) => c.code)).toEqual(["1"]);
+  });
+  it("keeps the price of goods missing from the file or with price 0", () => {
+    const p = planIsacoPrices(W, [g("1", 100), g("2", 100)], new Map([["2", null]]));
+    expect(p.apply).toEqual([]);
+    expect(p.missing).toBe(1);
+    expect(p.noPrice).toBe(1);
+  });
+  it("an equal price is unchanged", () => {
+    expect(planIsacoPrices(W, [g("1", 100)], new Map([["1", 100]])).unchanged).toBe(1);
+  });
+  it("the shop price is the new purchase price + the warehouse profit (100 → 110 with 10%)", () => {
+    const p = planIsacoPrices(W, [g("1", 90_000)], new Map([["1", 100_000]]));
+    expect(shopPriceToman(p.apply[0].newToman, 1000)).toBe(110_000);
+  });
+  it("more than 50 big jumps wait for «تأیید» and the rest apply; 50 all apply", () => {
+    const goods = Array.from({ length: 60 }, (_, i) => g(String(i), 1000));
+    const prices = (jumps: number) => new Map(goods.map((x, i): [string, number] => [x.code, i < jumps ? 2000 : 1100]));
+    const many = planIsacoPrices(W, goods, prices(51));
+    expect(many.waiting).toHaveLength(51);
+    expect(many.apply).toHaveLength(9);
+    const fifty = planIsacoPrices(W, goods, prices(50));
+    expect(fifty.waiting).toEqual([]);
+    expect(fifty.apply).toHaveLength(60);
+  });
+  it("more than 30% is a big jump; no old price never is", () => {
+    expect(isBigJump(1000, 1300)).toBe(false);
+    expect(isBigJump(1000, 1301)).toBe(true);
+    expect(isBigJump(1000, 699)).toBe(true);
+    expect(isBigJump(null, 5000)).toBe(false);
+    expect(isBigJump(0, 5000)).toBe(false);
+  });
+});
+
+describe("sheetModeFor", () => {
+  it("the ISACO warehouse's stock sheet changes only stock; others stock and price", () => {
+    expect(sheetModeFor("a", "a")).toBe("stock_only");
+    expect(sheetModeFor("b", "a")).toBe("stock_and_price");
+    expect(sheetModeFor("b", null)).toBe("stock_and_price");
+  });
+});
+
+describe("waitingToApply", () => {
+  const w = (productId: string, oldToman: number | null) => ({ productId, oldToman, newToman: 999 });
+  const goods = new Map([
+    ["a", { warehouseId: "isaco", purchasePriceToman: 100 }],
+    ["b", { warehouseId: "isaco", purchasePriceToman: 150 }],
+    ["c", { warehouseId: "other", purchasePriceToman: 100 }],
+  ]);
+  it("applies only goods still in the ISACO warehouse with the same old price", () => {
+    expect(waitingToApply([w("a", 100), w("b", 100), w("c", 100), w("gone", 100)], goods, "isaco").map((x) => x.productId)).toEqual(["a"]);
+  });
+  it("applies nothing when there is no ISACO warehouse", () => {
+    expect(waitingToApply([w("a", 100)], goods, null)).toEqual([]);
   });
 });

@@ -42,7 +42,22 @@ Files live in `UPLOAD_DIR` (`./uploads` in dev, the `uploads` volume in producti
 Names are `<uuid>.<jpg|png|webp>`; the type comes from the file bytes. Max 5 MB, 6 per product.
 Served by `src/app/media/[file]/route.ts` through `readPhoto`.
 
+## ISACO prices (#8)
+
+- One warehouse is the ISACO warehouse (`settings.getIsacoWarehouseId`, chosen with «قیمت این انبار از فایل ایساکو بیاید»
+  in a warehouse's panel on «انبارها», `WarehousePanel`; no menu item of its own). Its stock sheet
+  then changes only stock (`sheetModeFor`). ISACO's full price file changes the purchase price of that warehouse's
+  goods only. Purchase price = «قیمت خرده فروشی» (Rial → Toman); shop price as always.
+- The file is ~17 MB (47k rows), above the server-action limit, so it is posted to the route handler
+  `src/app/admin/isaco/route.ts` → `uploadIsacoFile` (`isaco-upload.ts`: requireManager, ≤ 30 MB).
+- `rules.parseIsacoSheet` reads it; `rules.planIsacoPrices` decides: missing goods and price 0 keep
+  their price; no good is created; more than 50 goods moving over 30% → those wait in
+  `catalog_isaco_waiting` for «تأیید تغییرهای بزرگ» (`approveIsacoWaiting`, newest run only, skips a
+  good whose price changed since). Each upload is a `catalog_isaco_runs` row.
+- Price history (`catalog_price_history`): every purchase-price change — by hand (`updateProduct`),
+  stock sheet, ISACO — with old / new price, source and staff. Shown on the product edit page.
+- The robot (#22) will call `importIsacoPrices` with the downloaded file.
+
 ## Not here yet
 
-Cart (#5), price lists (#3), supplier price feeds (#8), Torob (#7), admin sign-in (#9). No delete of
-products or list items.
+Price lists per warehouse (#3), ISACO robot (#22), Torob (#7). No delete of products or list items.

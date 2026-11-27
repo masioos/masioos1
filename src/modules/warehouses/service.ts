@@ -1,18 +1,45 @@
 import "server-only";
-import { desc, eq, inArray } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { type NewWarehouse, type SheetMode } from "./rules";
+import { moveInOrder, type NewWarehouse } from "./rules";
 import { warehouses } from "./schema";
 
 // Server-side use cases of the warehouses module. Only this module touches its tables.
 
+/** In the manager's order (▲ ▼); a new warehouse goes to the end. */
 export async function listWarehouses() {
-  return db.select().from(warehouses).orderBy(desc(warehouses.createdAt));
+  return db.select().from(warehouses).orderBy(asc(warehouses.position), desc(warehouses.createdAt));
 }
 
 export async function createWarehouse(input: NewWarehouse) {
-  const [row] = await db.insert(warehouses).values(input).returning();
+  const [row] = await db
+    .insert(warehouses)
+    .values({ ...input, position: sql`(select coalesce(max(${warehouses.position}), -1) + 1 from ${warehouses})` })
+    .returning();
   return row;
+}
+
+/** ▲ ▼: one place up or down; the whole list is numbered again 0, 1, 2… */
+export async function moveWarehouse(id: string, direction: "up" | "down") {
+  await db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ id: warehouses.id })
+      .from(warehouses)
+      .orderBy(asc(warehouses.position), desc(warehouses.createdAt))
+      .for("update");
+    const order = moveInOrder(
+      rows.map((r) => r.id),
+      id,
+      direction,
+    );
+    for (const [position, wid] of order.entries()) {
+      await tx.update(warehouses).set({ position }).where(eq(warehouses.id, wid));
+    }
+  });
+}
+
+export async function setWarehouseInfo(id: string, name: string, ownerName: string) {
+  await db.update(warehouses).set({ name, ownerName }).where(eq(warehouses.id, id));
 }
 
 export async function setWarehouseCard(id: string, cardNumber: string, cardHolder: string) {
@@ -21,10 +48,6 @@ export async function setWarehouseCard(id: string, cardNumber: string, cardHolde
 
 export async function setWarehouseProfit(id: string, profitBp: number) {
   await db.update(warehouses).set({ profitBp }).where(eq(warehouses.id, id));
-}
-
-export async function setWarehouseSheetMode(id: string, sheetMode: SheetMode) {
-  await db.update(warehouses).set({ sheetMode }).where(eq(warehouses.id, id));
 }
 
 /** Profit (basis points) per warehouse id. Used by catalog to compute shop prices. */

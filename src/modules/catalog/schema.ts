@@ -11,6 +11,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { staffUsers } from "@/modules/staff/schema";
 import { warehouses } from "@/modules/warehouses/schema";
 
 // Tables owned by the catalog module. Every table name starts with "catalog_".
@@ -119,3 +120,55 @@ export const catalogProductPhotos = pgTable("catalog_product_photos", {
 });
 
 export type Product = typeof catalogProducts.$inferSelect;
+
+// ── Purchase prices over time (#8) ──
+
+/** Every purchase-price change of a product: by hand, from the stock sheet, or from ISACO's file. */
+export const catalogPriceHistory = pgTable(
+  "catalog_price_history",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => catalogProducts.id, { onDelete: "cascade" }),
+    oldToman: bigint("old_toman", { mode: "number" }),
+    newToman: bigint("new_toman", { mode: "number" }),
+    source: text("source", { enum: ["hand", "sheet", "isaco"] }).notNull(),
+    // Who uploaded or typed it. Schema-level link only, like the warehouses one.
+    staffId: uuid("staff_id").references(() => staffUsers.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("catalog_price_history_product_idx").on(t.productId, t.at)],
+);
+
+/** One upload of ISACO's full price file and what it did. */
+export const catalogIsacoRuns = pgTable("catalog_isaco_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  staffId: uuid("staff_id").references(() => staffUsers.id),
+  fileRows: integer("file_rows").notNull(),
+  changed: integer("changed").notNull(),
+  unchanged: integer("unchanged").notNull(),
+  // Our goods not in the file, and goods whose file price is 0 / empty: their price is kept.
+  missing: integer("missing").notNull(),
+  noPrice: integer("no_price").notNull(),
+  // Big jumps waiting for the manager's «تأیید» (more than 50 goods moving over 30%).
+  waiting: integer("waiting").notNull(),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+});
+
+/** Big price jumps of the newest run, applied only after «تأیید». */
+export const catalogIsacoWaiting = pgTable(
+  "catalog_isaco_waiting",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => catalogIsacoRuns.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => catalogProducts.id, { onDelete: "cascade" }),
+    oldToman: bigint("old_toman", { mode: "number" }),
+    newToman: bigint("new_toman", { mode: "number" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.runId, t.productId] })],
+);

@@ -9,13 +9,14 @@ import { priceMove, type StockRowError } from "../rules";
 import { selectClass } from "./options";
 
 const fa = (n: number) => groupFa(n);
-const MODE_NAMES = { stock_and_price: "موجودی و قیمت", stock_only: "فقط موجودی" } as const;
+const MODE_NAMES = { stock_and_price: "موجودی و قیمت", stock_only: "فقط موجودی (قیمت از ایساکو)" } as const;
 
 /**
  * «ورود از Excel» (#2): 1) pick warehouse and file → 2) see what changes, tick the new goods,
  * «مطمئنم» when more than half would go «ناموجود» → 3) the report.
  */
 export function ImportForm({ warehouses }: { warehouses: { id: string; name: string }[] }) {
+  // One warehouse (a warehouse's panel): no select, the warehouse is fixed.
   const [round, setRound] = useState(0);
   return <ImportSteps key={round} warehouses={warehouses} again={() => setRound((n) => n + 1)} />;
 }
@@ -33,20 +34,26 @@ function ImportSteps({ warehouses, again }: { warehouses: { id: string; name: st
   return (
     <div className="flex flex-col gap-6">
       <form action={previewAction} className="grid max-w-md gap-3">
-        <Label htmlFor="warehouseId">انبار</Label>
-        <select id="warehouseId" name="warehouseId" required defaultValue="" className={selectClass}>
-          <option value="">— انتخاب کنید —</option>
-          {warehouses.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-            </option>
-          ))}
-        </select>
+        {warehouses.length === 1 ? (
+          <input type="hidden" name="warehouseId" value={warehouses[0].id} />
+        ) : (
+          <>
+            <Label htmlFor="warehouseId">انبار</Label>
+            <select id="warehouseId" name="warehouseId" required defaultValue="" className={selectClass}>
+              <option value="">— انتخاب کنید —</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <Label htmlFor="file">فایل موجودی (Excel با پسوند xlsx)</Label>
         <input id="file" name="file" type="file" accept=".xlsx" required className="text-sm" />
         <p className="text-muted-foreground text-xs">
           ستون‌های لازم: «کد فنی قطعه»، «نام قطعه»، «گروه خودرو»، «قیمت فروش (ریال)». قبل از ذخیره، تغییرها و
-          کالاهای تازه را می‌بینید. اینکه قیمت‌ها هم عوض شوند یا فقط موجودی، در «انبارها» برای هر انبار تعیین می‌شود.
+          کالاهای تازه را می‌بینید. برای انبار ایساکو فقط موجودی عوض می‌شود (قیمت از فایل ایساکو می‌آید)؛ برای بقیه‌ی انبارها موجودی و قیمت.
         </p>
         <Button type="submit" disabled={reading}>
           {reading ? "در حال خواندن فایل… (ممکن است چند ثانیه طول بکشد)" : "خواندن فایل"}
@@ -193,7 +200,7 @@ const signed = (n: number) => (n > 0 ? `+${fa(n)}` : n < 0 ? `−${fa(-n)}` : fa
 const toman = (n: number | null) => (n === null ? "بدون قیمت" : fa(n));
 
 /** Click to open. Green: price changes with old and new price, percent and Toman. */
-function PriceList({
+export function PriceList({
   title,
   rows,
 }: {
@@ -253,7 +260,7 @@ const TONES = {
 } as const;
 
 /** The totals of an import as a small coloured table: what, and how many goods. */
-function Summary({ rows }: { rows: { label: string; n: number; tone: keyof typeof TONES }[] }) {
+export function Summary({ rows }: { rows: { label: string; n: number; tone: keyof typeof TONES }[] }) {
   return (
     <table className="w-full max-w-md overflow-hidden rounded-lg border text-sm">
       <thead className="bg-blue-100">

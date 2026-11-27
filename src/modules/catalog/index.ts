@@ -8,7 +8,9 @@ export { PriceText } from "./ui/product-card";
 // Admin
 export { EditProduct, NewProduct, ProductAdminTable } from "./ui/admin-products";
 export { CatalogLists } from "./ui/lists-page";
-export { StockSheetImport } from "./ui/import-page";
+// ISACO prices (#8): the page, and the upload route /admin/isaco (file too big for a server action)
+export { WarehousePanel } from "./ui/warehouse-panel";
+export { uploadIsacoFile } from "./isaco-upload";
 // Media route (/media/<file>), cart and requests (#5)
 export { getCartProducts, getProductForStaff, getPurchasePrices, readPhoto, type CartProduct } from "./service";
 export { canAddToCart, formatToman, maxQuantity, UNIT_NAMES, unitPriceLabel, type Unit } from "./rules";

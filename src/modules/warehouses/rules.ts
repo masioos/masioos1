@@ -25,8 +25,10 @@ export function formatProfitPercent(bp: number): string {
   return frac ? `${whole}.${frac}` : String(whole);
 }
 
+/** Empty means 0% (the box shows a faint «0»). */
 export const profitPercentSchema = z
   .string()
+  .transform((s) => (s.trim() === "" ? "0" : s))
   .transform((s, ctx) => {
     const bp = parseProfitPercent(s);
     if (bp === null) {
@@ -54,14 +56,25 @@ export const setCardSchema = z.object({
   cardHolder: cardHolderSchema,
 });
 
-/** «فایل اکسل»: what a stock sheet may change for this warehouse (#2). */
-export const SHEET_MODES = { stock_and_price: "موجودی و قیمت", stock_only: "فقط موجودی" } as const;
-export type SheetMode = keyof typeof SHEET_MODES;
-
-export const setSheetModeSchema = z.object({
+/** The manager fixes a warehouse's name or owner in the list (saves by itself). */
+export const setInfoSchema = z.object({
   id: z.uuid(),
-  sheetMode: z.enum(["stock_and_price", "stock_only"], { error: "یکی از دو حالت را انتخاب کنید" }),
+  name: newWarehouseSchema.shape.name,
+  ownerName: newWarehouseSchema.shape.ownerName,
 });
+
+/** ▲ ▼ in the list: one place up or down. */
+export const moveSchema = z.object({ id: z.uuid(), direction: z.enum(["up", "down"]) });
+
+/** The list order after moving one warehouse one place (unchanged at the top / bottom). */
+export function moveInOrder(ids: readonly string[], id: string, direction: "up" | "down"): string[] {
+  const order = [...ids];
+  const i = order.indexOf(id);
+  const j = direction === "up" ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= order.length) return order;
+  [order[i], order[j]] = [order[j], order[i]];
+  return order;
+}
 
 export const setProfitSchema = z.object({
   id: z.uuid(),
