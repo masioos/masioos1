@@ -22,8 +22,17 @@ countries of origin, categories (two levels) and part groups. Issue #1.
 - Shop reads (`searchProducts`, `getProductByCode`, `listOtherModels`) return active products only
   and never the purchase price, profit, warehouse or stock.
 - No purchase price → «برای قیمت تماس بگیرید». Unavailable → «ناموجود», `canAddToCart` is false.
-- Excel import (`importStockSheet`): new code → create; same code in the same warehouse → purchase
-  price only (+ car link); code in another warehouse → skipped and reported. Names are never changed.
+- Excel import (#2), in steps: `previewStockSheetAction` reads the sheet, keeps it in
+  `UPLOAD_DIR/imports` (removed after a day) and shows what changes; `applyStockSheetAction` reads the
+  kept file again (rows never come from the browser) and writes it. `rules.planStockImport` decides:
+  - new code → listed; created only when ticked (`newCode`), with the sheet price, or without price
+    when the warehouse is «فقط موجودی» (`warehouses.sheet_mode = stock_only`, never touches a price);
+  - same code in the same warehouse → `from_sheet` true, purchase price (only «موجودی و قیمت»), car
+    link; available again if a sheet had made it «ناموجود» (`unavailable_source = sheet`);
+  - a `from_sheet` good of this warehouse missing from the sheet → «ناموجود» (`sheet`); goods made
+    unavailable by hand (`hand`, set by `setProductFlag`) or never in a sheet are left alone;
+  - more than half of the warehouse's sheet goods going «ناموجود» → «مطمئنم» needed;
+  - code in another warehouse → skipped and reported. Names are never changed; nothing is deleted.
 - `search_text` = `normalizeSearch(name + code + brand)`, written on every save and on brand rename.
   Search splits the query into words; each must be in `search_text` (ILIKE).
 

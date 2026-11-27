@@ -11,6 +11,8 @@ export const warehouses = pgTable("warehouses", {
   cardHolder: text("card_holder").notNull().default(""),
   // Profit added on top of the purchase price, in basis points (1000 = 10%). Integer: no floats in money.
   profitBp: integer("profit_bp").notNull().default(0),
+  // What this warehouse's Excel stock sheet changes (#2): stock and prices, or only stock.
+  sheetMode: text("sheet_mode", { enum: ["stock_and_price", "stock_only"] }).notNull().default("stock_and_price"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

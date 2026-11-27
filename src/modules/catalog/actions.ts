@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { readSheet } from "read-excel-file/node";
 import { z } from "zod";
 import {
+  isValidCode,
   listItemSchema,
   parseStockSheetRows,
   productFlagsSchema,
@@ -14,7 +15,12 @@ import {
 import {
   addPhoto,
   createProduct,
+  dropSheetFile,
   importStockSheet,
+  keepSheetFile,
+  previewStockSheet,
+  readSheetFile,
+  type ImportPreview,
   warehouseExists,
   removePhoto,
   saveListItem,
@@ -137,14 +143,27 @@ export async function removePhotoAction(formData: FormData): Promise<void> {
 
 // ── Excel import ───────────────────────────────────────────────────────────────────────
 
-export type ImportState = {
-  error?: string;
-  report?: ImportReport & { fileErrors: StockRowError[] };
-};
+/**
+ * «ورود از Excel» in steps (#2): «preview» (file read and kept, nothing written) → the manager
+ * ticks new goods → «done» (written, with the report).
+ */
+export type ImportState =
+  | { step?: undefined; error?: string }
+  | { step: "preview"; error?: string; token: string; warehouseId: string; preview: ImportPreview; fileErrors: StockRowError[] }
+  | { step: "done"; report: ImportReport & { fileErrors: StockRowError[] } };
 
 const MAX_SHEET_BYTES = 5 * 1024 * 1024;
 
-export async function importStockSheetAction(_prev: ImportState, formData: FormData): Promise<ImportState> {
+async function readRows(bytes: Buffer): Promise<ReturnType<typeof parseStockSheetRows>> {
+  try {
+    return parseStockSheetRows(await readSheet(bytes));
+  } catch {
+    return { ok: false, error: "فایل خوانده نشد. آیا فایل Excel سالم است؟" };
+  }
+}
+
+/** Step 1 → 2: reads the sheet, keeps it on the server, and shows what it would change. */
+export async function previewStockSheetAction(_prev: ImportState, formData: FormData): Promise<ImportState> {
   await requireManager();
   const warehouseId = z.uuid().safeParse(formData.get("warehouseId"));
   if (!warehouseId.success || !(await warehouseExists(warehouseId.data))) {
@@ -155,16 +174,43 @@ export async function importStockSheetAction(_prev: ImportState, formData: FormD
   if (!file.name.toLowerCase().endsWith(".xlsx")) return { error: "فقط فایل .xlsx قبول می‌شود" };
   if (file.size > MAX_SHEET_BYTES) return { error: "حجم فایل باید کمتر از ۵ مگابایت باشد" };
 
-  let rows: unknown[][];
-  try {
-    rows = await readSheet(Buffer.from(await file.arrayBuffer()));
-  } catch {
-    return { error: "فایل خوانده نشد. آیا فایل Excel سالم است؟" };
-  }
-  const sheet = parseStockSheetRows(rows);
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const sheet = await readRows(bytes);
+  if (!sheet.ok) return { error: sheet.error };
+  const preview = await previewStockSheet(warehouseId.data, sheet.rows, sheet.errors);
+  if (!preview) return { error: "انبار را انتخاب کنید" };
+  const token = await keepSheetFile(bytes, { warehouseId: warehouseId.data, mode: preview.mode });
+  return { step: "preview", token, warehouseId: warehouseId.data, preview, fileErrors: sheet.errors };
+}
+
+const applySchema = z.object({
+  token: z.uuid(),
+  confirmed: z.literal("on").optional(),
+});
+
+/**
+ * Step 2 → 3: reads the kept sheet again on the server (rows never come from the browser) and
+ * writes it. Only the ticked new codes are created.
+ */
+export async function applyStockSheetAction(prev: ImportState, formData: FormData): Promise<ImportState> {
+  await requireManager();
+  const parsed = applySchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "فایل را دوباره انتخاب کنید" };
+  const selected = new Set(formData.getAll("newCode").map(String).filter(isValidCode));
+  // The warehouse and mode come from what was saved with the file, never from the form.
+  const kept = await readSheetFile(parsed.data.token);
+  if (!kept) return { error: "فایل پیدا نشد. دوباره انتخابش کنید." };
+  const sheet = await readRows(kept.bytes);
   if (!sheet.ok) return { error: sheet.error };
 
-  const report = await importStockSheet(warehouseId.data, sheet.rows);
+  const res = await importStockSheet(kept.kept.warehouseId, sheet.rows, {
+    selectedNew: selected,
+    confirmed: parsed.data.confirmed === "on",
+    rejected: sheet.errors,
+    previewMode: kept.kept.mode,
+  });
+  if (!res.ok) return prev.step === "preview" ? { ...prev, error: res.error } : { error: res.error };
+  await dropSheetFile(parsed.data.token);
   refreshAll();
-  return { report: { ...report, fileErrors: sheet.errors } };
+  return { step: "done", report: { ...res.report, fileErrors: sheet.errors } };
 }

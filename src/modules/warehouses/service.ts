@@ -1,7 +1,7 @@
 import "server-only";
 import { desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
-import { type NewWarehouse } from "./rules";
+import { type NewWarehouse, type SheetMode } from "./rules";
 import { warehouses } from "./schema";
 
 // Server-side use cases of the warehouses module. Only this module touches its tables.
@@ -21,6 +21,10 @@ export async function setWarehouseCard(id: string, cardNumber: string, cardHolde
 
 export async function setWarehouseProfit(id: string, profitBp: number) {
   await db.update(warehouses).set({ profitBp }).where(eq(warehouses.id, id));
+}
+
+export async function setWarehouseSheetMode(id: string, sheetMode: SheetMode) {
+  await db.update(warehouses).set({ sheetMode }).where(eq(warehouses.id, id));
 }
 
 /** Profit (basis points) per warehouse id. Used by catalog to compute shop prices. */

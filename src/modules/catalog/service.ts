@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { and, asc, count, desc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db/client";
@@ -14,6 +14,11 @@ import {
   MAX_PHOTOS_PER_PRODUCT,
   normalizeCode,
   PHOTO_CONTENT_TYPES,
+  planStockImport,
+  type ExistingGood,
+  type SheetMode,
+  type StockImportPlan,
+  type StockRowError,
   searchWords,
   shopPriceToman,
   type ListItemInput,
@@ -222,7 +227,12 @@ export async function updateProduct(id: string, input: ProductInput): Promise<Re
 export async function setProductFlag(id: string, flag: "isActive" | "isUnavailable", value: boolean) {
   await db
     .update(catalogProducts)
-    .set({ [flag]: value, updatedAt: new Date() })
+    .set(
+      flag === "isUnavailable"
+        ? // By hand: a stock sheet never makes it available again (#2).
+          { isUnavailable: value, unavailableSource: value ? ("hand" as const) : null, updatedAt: new Date() }
+        : { isActive: value, updatedAt: new Date() },
+    )
     .where(eq(catalogProducts.id, id));
 }
 
@@ -363,69 +373,197 @@ export async function readPhoto(name: string): Promise<{ bytes: Uint8Array; cont
   }
 }
 
-// ── Excel import ───────────────────────────────────────────────────────────────────────
+// ── Excel import (#2) ──────────────────────────────────────────────────────────────────
+
+type PriceRow = { code: string; name: string; oldToman: number | null; newToman: number | null };
 
 export type ImportReport = {
   created: number;
-  updated: number;
+  pricesChanged: PriceRow[];
+  madeAvailable: number;
+  madeUnavailable: { code: string; name: string }[];
   skipped: { row: number; code: string; reason: string }[];
 };
 
+/** What an import would change, shown before «تأیید و ورود». Nothing is written. */
+export type ImportPreview = {
+  warehouseName: string;
+  mode: SheetMode;
+  newRows: StockRow[];
+  pricesChanged: PriceRow[];
+  madeAvailable: number;
+  madeUnavailable: { code: string; name: string }[];
+  skipped: StockRowError[];
+  needsConfirm: boolean;
+};
+
+/** UPLOAD_DIR/imports: a sheet waits here between the preview and «تأیید و ورود» (manager only). */
+function importsDir() {
+  return path.join(/*turbopackIgnore: true*/ uploadDir(), "imports");
+}
+
+const SHEET_KEEP_MS = 24 * 60 * 60 * 1000;
+
+/** What the manager saw in the preview: the warehouse and its sheet mode, kept next to the file. */
+export type KeptSheet = { warehouseId: string; mode: SheetMode };
+
+const keptFile = (token: string, ext: "xlsx" | "json") => path.join(/*turbopackIgnore: true*/ importsDir(), `${token}.${ext}`);
+
 /**
- * One transaction. Per row: new code → create product (name, purchase price, car link; car created
- * if missing). Code already in this warehouse → update the purchase price only (+ car link if
- * missing); the name staff may have edited is never touched. Code in another warehouse → skipped.
+ * Keeps an uploaded sheet for step 3, with the warehouse and mode of the preview; returns its
+ * token. Files older than a day are removed.
  */
+export async function keepSheetFile(bytes: Uint8Array, kept: KeptSheet): Promise<string> {
+  await mkdir(importsDir(), { recursive: true });
+  for (const name of await readdir(importsDir())) {
+    const file = path.join(/*turbopackIgnore: true*/ importsDir(), name);
+    try {
+      if (Date.now() - (await stat(file)).mtimeMs > SHEET_KEEP_MS) await unlink(file);
+    } catch {
+      // Removed by another request at the same moment, or not a file: leave it.
+    }
+  }
+  const token = randomUUID();
+  await writeFile(keptFile(token, "xlsx"), bytes);
+  await writeFile(keptFile(token, "json"), JSON.stringify(kept));
+  return token;
+}
+
+/** The kept sheet of `token` (a uuid checked by the action) and what the preview was for; null if gone. */
+export async function readSheetFile(token: string): Promise<{ bytes: Buffer; kept: KeptSheet } | null> {
+  try {
+    const [bytes, json] = await Promise.all([readFile(keptFile(token, "xlsx")), readFile(keptFile(token, "json"), "utf8")]);
+    return { bytes, kept: JSON.parse(json) as KeptSheet };
+  } catch {
+    return null;
+  }
+}
+
+export async function dropSheetFile(token: string) {
+  await Promise.all([unlink(keptFile(token, "xlsx")).catch(() => {}), unlink(keptFile(token, "json")).catch(() => {})]);
+}
+
 export async function warehouseExists(id: string): Promise<boolean> {
   return (await getWarehouseProfits([id])).has(id);
 }
 
-export async function importStockSheet(warehouseId: string, rows: StockRow[]): Promise<ImportReport> {
-  const report: ImportReport = { created: 0, updated: 0, skipped: [] };
-  if (rows.length === 0) return report;
+async function warehouseOf(id: string): Promise<{ name: string; mode: SheetMode } | null> {
+  const w = (await listWarehouses()).find((x) => x.id === id);
+  return w ? { name: w.name, mode: w.sheetMode } : null;
+}
 
-  await db.transaction(async (tx) => {
-    // Cars named in the sheet: create the missing ones, then map name → id.
-    const carNames = [...new Set(rows.map((r) => r.car).filter((c): c is string => !!c))];
-    if (carNames.length > 0) {
-      await tx.insert(catalogCars).values(carNames.map((name) => ({ name }))).onConflictDoNothing();
-    }
+type Reader = Pick<typeof db, "select">;
+
+/** This warehouse's goods, plus any good (of any warehouse) with one of the sheet's codes. */
+async function goodsFor(q: Reader, warehouseId: string, rows: readonly StockRow[]): Promise<ExistingGood[]> {
+  const codes = rows.map((r) => r.code);
+  return q
+    .select({
+      id: catalogProducts.id,
+      code: catalogProducts.code,
+      name: catalogProducts.name,
+      warehouseId: catalogProducts.warehouseId,
+      purchasePriceToman: catalogProducts.purchasePriceToman,
+      fromSheet: catalogProducts.fromSheet,
+      isUnavailable: catalogProducts.isUnavailable,
+      unavailableSource: catalogProducts.unavailableSource,
+    })
+    .from(catalogProducts)
+    .where(
+      codes.length > 0
+        ? or(eq(catalogProducts.warehouseId, warehouseId), inArray(catalogProducts.code, codes))
+        : eq(catalogProducts.warehouseId, warehouseId),
+    );
+}
+
+const short = (list: { code: string; name: string }[]) => list.map(({ code, name }) => ({ code, name }));
+const prices = (list: StockImportPlan["priceUpdates"]): PriceRow[] =>
+  list.map((u) => ({ code: u.code, name: u.name, oldToman: u.oldToman, newToman: u.purchaseToman }));
+
+/** Step 2 of «ورود از Excel»: what the sheet would change, with the new codes to tick. */
+export async function previewStockSheet(
+  warehouseId: string,
+  rows: StockRow[],
+  rejected: StockRowError[],
+): Promise<ImportPreview | null> {
+  const w = await warehouseOf(warehouseId);
+  if (!w) return null;
+  const existing = await goodsFor(db, warehouseId, rows);
+  const plan = planStockImport({ warehouseId, mode: w.mode, rows, existing, selectedNew: new Set(), rejected });
+  return {
+    warehouseName: w.name,
+    mode: w.mode,
+    newRows: plan.newRows,
+    pricesChanged: prices(plan.priceUpdates),
+    madeAvailable: plan.makeAvailable.length,
+    madeUnavailable: short(plan.makeUnavailable),
+    skipped: plan.skipped,
+    needsConfirm: plan.needsConfirm,
+  };
+}
+
+const CONFIRM_NEEDED = "بیشتر از نصف کالاهای این انبار ناموجود می‌شوند. اگر مطمئنی، تیک «مطمئنم» را بزن.";
+
+/**
+ * Step 3: one transaction, planned again from the database as it is now (`planStockImport`).
+ * Only ticked new codes are created; names are never changed; nothing is deleted.
+ */
+export async function importStockSheet(
+  warehouseId: string,
+  rows: StockRow[],
+  opts: { selectedNew: ReadonlySet<string>; confirmed: boolean; rejected: StockRowError[]; previewMode: SheetMode },
+): Promise<{ ok: true; report: ImportReport } | { ok: false; error: string }> {
+  const w = await warehouseOf(warehouseId);
+  if (!w) return { ok: false, error: "انبار پیدا نشد" };
+  // The manager approved what the preview showed: a mode changed since then would change other things.
+  if (w.mode !== opts.previewMode) return { ok: false, error: "تنظیم فایل اکسل این انبار عوض شده است. فایل را دوباره بخوانید." };
+
+  return db.transaction(async (tx) => {
+    const existing = await goodsFor(tx, warehouseId, rows);
+    const plan = planStockImport({ warehouseId, mode: w.mode, rows, existing, selectedNew: opts.selectedNew, rejected: opts.rejected });
+    if (plan.needsConfirm && !opts.confirmed) return { ok: false as const, error: CONFIRM_NEEDED };
+    const now = new Date();
+
+    // Cars named in the rows we write: create the missing ones, then map name → id.
+    const used = [...plan.create, ...plan.matched.map((m) => m.row)];
+    const carNames = [...new Set(used.map((r) => r.car).filter((c): c is string => !!c))];
+    if (carNames.length > 0) await tx.insert(catalogCars).values(carNames.map((name) => ({ name }))).onConflictDoNothing();
     const cars = carNames.length
       ? await tx.select({ id: catalogCars.id, name: catalogCars.name }).from(catalogCars).where(inArray(catalogCars.name, carNames))
       : [];
     const carId = new Map(cars.map((c) => [c.name, c.id]));
-
-    const codes = rows.map((r) => r.code);
-    const existing = await tx
-      .select({ id: catalogProducts.id, code: catalogProducts.code, warehouseId: catalogProducts.warehouseId })
-      .from(catalogProducts)
-      .where(inArray(catalogProducts.code, codes));
-    const byCode = new Map(existing.map((p) => [p.code, p]));
-
-    const toCreate: StockRow[] = [];
     const links: { productId: string; carId: string }[] = [];
-    for (const r of rows) {
-      const found = byCode.get(r.code);
-      if (!found) {
-        toCreate.push(r);
-        continue;
-      }
-      if (found.warehouseId !== warehouseId) {
-        report.skipped.push({ row: r.row, code: r.code, reason: "این کد در انبار دیگری ثبت شده است" });
-        continue;
-      }
+    const link = (productId: string, car: string | null) => {
+      const c = car ? carId.get(car) : undefined;
+      if (c) links.push({ productId, carId: c });
+    };
+
+    for (const u of plan.priceUpdates) {
+      await tx.update(catalogProducts).set({ purchasePriceToman: u.purchaseToman, updatedAt: now }).where(eq(catalogProducts.id, u.id));
+    }
+    const ids = (list: { id: string }[]) => list.map((x) => x.id);
+    for (let i = 0; i < plan.matched.length; i += 1000) {
+      const chunk = plan.matched.slice(i, i + 1000);
+      await tx.update(catalogProducts).set({ fromSheet: true }).where(inArray(catalogProducts.id, ids(chunk)));
+      for (const m of chunk) link(m.id, m.row.car);
+    }
+    if (plan.makeAvailable.length > 0) {
       await tx
         .update(catalogProducts)
-        .set({ purchasePriceToman: r.purchaseToman, updatedAt: new Date() })
-        .where(eq(catalogProducts.id, found.id));
-      report.updated++;
-      const c = r.car ? carId.get(r.car) : undefined;
-      if (c) links.push({ productId: found.id, carId: c });
+        .set({ isUnavailable: false, unavailableSource: null, updatedAt: now })
+        .where(and(inArray(catalogProducts.id, ids(plan.makeAvailable)), eq(catalogProducts.unavailableSource, "sheet")));
+    }
+    if (plan.makeUnavailable.length > 0) {
+      await tx
+        .update(catalogProducts)
+        .set({ isUnavailable: true, unavailableSource: "sheet", updatedAt: now })
+        .where(and(inArray(catalogProducts.id, ids(plan.makeUnavailable)), eq(catalogProducts.isUnavailable, false)));
     }
 
-    for (let i = 0; i < toCreate.length; i += 500) {
-      const chunk = toCreate.slice(i, i + 500);
-      const created = await tx
+    let created = 0;
+    for (let i = 0; i < plan.create.length; i += 500) {
+      const chunk = plan.create.slice(i, i + 500);
+      const rowsMade = await tx
         .insert(catalogProducts)
         .values(
           chunk.map((r) => ({
@@ -433,25 +571,31 @@ export async function importStockSheet(warehouseId: string, rows: StockRow[]): P
             code: r.code,
             name: r.name,
             purchasePriceToman: r.purchaseToman,
+            fromSheet: true,
             searchText: buildSearchText(r.name, r.code, null),
           })),
         )
         .returning({ id: catalogProducts.id, code: catalogProducts.code });
       const rowByCode = new Map(chunk.map((r) => [r.code, r]));
-      for (const p of created) {
-        const car = rowByCode.get(p.code)?.car;
-        const c = car ? carId.get(car) : undefined;
-        if (c) links.push({ productId: p.id, carId: c });
-      }
-      report.created += created.length;
+      for (const p of rowsMade) link(p.id, rowByCode.get(p.code)?.car ?? null);
+      created += rowsMade.length;
     }
 
     for (let i = 0; i < links.length; i += 1000) {
       await tx.insert(catalogProductCars).values(links.slice(i, i + 1000)).onConflictDoNothing();
     }
-  });
 
-  return report;
+    return {
+      ok: true as const,
+      report: {
+        created,
+        pricesChanged: prices(plan.priceUpdates),
+        madeAvailable: plan.makeAvailable.length,
+        madeUnavailable: short(plan.makeUnavailable),
+        skipped: plan.skipped,
+      },
+    };
+  });
 }
 
 // ── Shop reads (active products only; no purchase price, profit or warehouse) ──────────

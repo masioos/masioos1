@@ -54,6 +54,15 @@ export const setCardSchema = z.object({
   cardHolder: cardHolderSchema,
 });
 
+/** «فایل اکسل»: what a stock sheet may change for this warehouse (#2). */
+export const SHEET_MODES = { stock_and_price: "موجودی و قیمت", stock_only: "فقط موجودی" } as const;
+export type SheetMode = keyof typeof SHEET_MODES;
+
+export const setSheetModeSchema = z.object({
+  id: z.uuid(),
+  sheetMode: z.enum(["stock_and_price", "stock_only"], { error: "یکی از دو حالت را انتخاب کنید" }),
+});
+
 export const setProfitSchema = z.object({
   id: z.uuid(),
   profitBp: profitPercentSchema,

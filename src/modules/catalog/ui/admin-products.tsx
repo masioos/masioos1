@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { groupFa } from "@/lib/money";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -20,6 +19,7 @@ import {
   PAGE_SIZE,
 } from "../service";
 import { FlagButton } from "./flag-button";
+import { LiveSearchInput } from "./live-search-input";
 import { selectClass } from "./options";
 import { Pager } from "./pager";
 import { PhotoManager } from "./photo-manager";
@@ -50,7 +50,7 @@ export async function ProductAdminTable({ searchParams }: { searchParams: Search
   return (
     <div className="flex flex-col gap-4">
       <form className="flex flex-wrap items-end gap-2" action="/admin/catalog">
-        <Input name="q" defaultValue={q} placeholder="نام، کد فنی یا برند" className="w-64" />
+        <LiveSearchInput name="q" type="search" defaultValue={q} placeholder="نام، کد فنی یا برند" className="w-64" />
         <select name="warehouse" defaultValue={warehouseId} className={`${selectClass} w-48`} aria-label="انبار">
           <option value="">همه‌ی انبارها</option>
           {warehouses.map((w) => (
